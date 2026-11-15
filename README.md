@@ -7,7 +7,15 @@ A Windows web browser built on Chromium (via Electron) with:
 - **Tor windows** (`Ctrl+Shift+U`): built-in Tor, `.onion` sites, New identity, Safest mode (JavaScript off), WebRTC leak protection, nothing saved after closing.
 - **Gestures**: touchpad two-finger swipe back/forward, pinch zoom, mouse gestures (hold right button and draw), rocker gestures, right-button + wheel to switch tabs, mouse side buttons.
 - **AI assistant** (`Ctrl+Shift+Space`, or type `? question` in the address bar): summarise / explain / translate pages and selections. Works with **free** models (Ollama, LM Studio, OpenRouter free models, Groq, Gemini free tier) and **paid** ones (OpenAI, Anthropic Claude, any OpenAI-compatible server). Keys are encrypted with Windows secure storage.
-- **Seeker search** on the new-tab page: summarised answers with **no AI** (Wikipedia + free public data, calculator, units, currency, weather, dictionary).
+- **Seeker search** (new-tab page and address bar), **no AI**:
+  - Searches **DuckDuckGo, Bing, Mojeek and Marginalia** at once and merges the rankings. Mojeek and Marginalia crawl independently, so it reaches small sites and blogs the big engines skip.
+  - **Reads the top pages** itself, then summarises them with an extractive summariser (TextRank + BM25 + cross-source agreement + MMR). You get one answer, cited key points, and "✓ confirmed by N sources".
+  - Exact answers for dates, numbers, how-to **steps**, **X vs Y** comparison tables, Stack Overflow answers for code, and Wikidata **quick facts**.
+  - **Understands everyday English**: fixes shorthand and typos ("whos the cm of punjab", "hw to make choclate cake plz") and suggests spellings from the words in the results. It turns questions like *who is the CM of X / when was X born / who invented X / how old is X* into exact facts, written as proper sentences. Extracted sentences are tidied: "He/It" is replaced with the name, and a/an and punctuation are fixed.
+  - **Blogs** tab: independent blogs, Medium/Substack/Blogger/WordPress posts, Hacker News and Reddit, plus a summary of what bloggers say.
+  - **`site:anyblog.com topic`** or **Search this site** asks the website directly (WordPress search API, Blogger feed, RSS/Atom, sitemaps). This finds posts no search engine has indexed.
+  - **Private page memory**: pages you visit are searchable later, stored only on your PC. It never stores incognito/Tor, login, banking or email pages, and you can switch it off in Settings.
+  - News and Images tabs, plus a calculator, units (incl. bigha/kanal/marla), currency, dates ("days until Diwali"-style), weather, time and dictionary.
 
 ## Install
 

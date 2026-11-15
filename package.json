@@ -8,7 +8,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js",
+    "test": "node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js && node test/nlp.test.js",
     "dist": "electron-builder --win --x64 --publish never"
   },
   "devDependencies": {

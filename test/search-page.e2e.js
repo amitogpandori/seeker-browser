@@ -23,6 +23,12 @@ const wikiI = JSON.stringify({ query: { pages: { 2: { pageid: 2, extract: 'Chhen
 const wd = JSON.stringify({ entities: { Q192: { claims: { P31: [{ rank: 'normal', mainsnak: { datavalue: { type: 'wikibase-entityid', value: { id: 'Q10943' } } } }], P495: [] } } } });
 const wdl = JSON.stringify({ entities: { Q10943: { labels: { en: { value: 'cheese' } } } } });
 window.__FIX = (u) => {
+  if (u.includes('srsearch=punjab')) return JSON.stringify({ query: { searchinfo: {}, search: [{ title: 'Punjab', pageid: 10 }, { title: 'Punjab, India', pageid: 11 }] } });
+  if (u.includes('ppprop=wikibase_item&redirects=1&titles=')) return JSON.stringify({ query: { pages: { 10: { title: 'Punjab', pageprops: { wikibase_item: 'Q169985' } }, 11: { title: 'Punjab, India', pageprops: { wikibase_item: 'Q22424' } } } } });
+  if (u.includes('wbgetentities') && u.includes('Q169985')) return JSON.stringify({ entities: { Q169985: { claims: {}, labels: { en: { value: 'Punjab' } } }, Q22424: { labels: { en: { value: 'Punjab' } }, sitelinks: { enwiki: { title: 'Punjab, India' } }, claims: {
+    P6: [{ rank: 'normal', qualifiers: { P582: [{}] }, mainsnak: { datavalue: { type: 'wikibase-entityid', value: { id: 'Q999' } } } }, { rank: 'normal', mainsnak: { datavalue: { type: 'wikibase-entityid', value: { id: 'Q16000' } } } }] } } } });
+  if (u.includes('wbgetentities') && u.includes('Q16000')) return JSON.stringify({ entities: { Q16000: { labels: { en: { value: 'Bhagwant Mann' } } }, Q999: { labels: { en: { value: 'Former CM' } } } } });
+  if (u.includes('srsearch=') && u.includes('chief')) return JSON.stringify({ query: { search: [] } });
   if (u.includes('html.duckduckgo.com')) return ddg;
   if (u.includes('bing.com/search')) return bing;
   if (u.includes('mojeek.com')) return mojeek;
@@ -100,6 +106,7 @@ window.seeker = {
     summary: document.querySelector('#answer .txt')?.textContent.slice(0, 100),
   }), '/tmp/se-blogs.png');
   await run('paneer prices', 'news', () => ({ headlines: document.querySelectorAll('.news-item').length, summary: document.querySelector('#answer .txt')?.textContent.slice(0, 100) }));
+  await run('whos the cm of punjab', '', () => ({ notice: document.querySelector('.dym')?.textContent, fact: document.querySelector('#fact .txt')?.textContent, first: document.querySelector('#c-main .card')?.id || document.querySelector('#c-main > div:not(.dym):not(#dym)')?.id }), '/tmp/se-fact.png');
   await run('days until christmas', '', () => document.querySelector('.big')?.textContent);
   await run('5 kanal to sqft', '', () => document.querySelector('.big')?.textContent);
   await browser.close();

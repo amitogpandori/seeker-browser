@@ -2,11 +2,13 @@
 // Seeker results page: progressive, multi-source, no AI.
 (function () {
 'use strict';
-const E = SeekerEngine, S = SeekerSources;
+const E = SeekerEngine, S = SeekerSources, N = SeekerNLP;
 const esc = E.esc;
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
-const QUERY = (params.get('q') || '').trim();
+const RAW = (params.get('q') || '').trim();
+const NORM = N.normalizeQuery(RAW);
+const QUERY = params.get('exact') ? RAW : NORM.text; // understood query (shorthand, contractions & typos fixed)
 const TAB = params.get('t') || 'all';
 let lang = 'en'; try { lang = localStorage.getItem('seeker.lang') || 'en'; } catch { /* */ }
 const main = $('#main');
@@ -71,11 +73,20 @@ function renderShell(q) {
       <div class="logo" id="home">Seek<b>er</b></div>
       <form class="sbox" id="sf"><input id="sq" value="${esc(q)}" enterkeyhint="search">${langSelect()}<button class="go">Search</button></form></div>
       <div class="tabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${k === TAB ? 'on' : ''}">${site && k === 'all' ? 'Site: ' + esc(site[1]) : l}</button>`).join('')}</div></div>
-    <div class="wrap"><div class="col" id="c-main"></div><div class="col" id="c-side"></div></div>`;
+    <div class="wrap"><div class="col" id="c-main">${noticeHtml()}<div id="dym"></div></div><div class="col" id="c-side"></div></div>`;
   $('#sf').onsubmit = (e) => { e.preventDefault(); go($('#sq').value); };
   $('#home').onclick = () => { location.href = '?'; };
   main.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => go(q, b.dataset.t)));
   bindLang();
+}
+function noticeHtml() {
+  if (params.get('exact') || !NORM.changed) return '';
+  return `<p class="dym">Showing results for <b>${esc(QUERY)}</b> · <a href="?q=${encodeURIComponent(RAW)}&exact=1${TAB !== 'all' ? '&t=' + TAB : ''}">Search for “${esc(RAW)}” instead</a></p>`;
+}
+function polishSum(sum, subject, person) {
+  if (sum.answer) sum.answer.text = N.polish(sum.answer.text, subject, { person });
+  sum.points = (sum.points || []).map((p) => ({ ...p, text: N.polish(p.text, subject, { person }) }));
+  return sum;
 }
 function section(id, col = 'c-main', html = '') {
   let el = document.getElementById(id);
@@ -103,7 +114,7 @@ function bindResultActions(el, q, list) {
     const pages = await S.readPages([r], 1, 12000);
     if (!pages.length) { b.textContent = "Couldn't read this page"; return; }
     const p = pages[0];
-    const sum = E.summarise([{ ...p, weight: 1 }], q.replace(/\bsite:\S+/, '') || p.title, { n: 6, type: 'topic' });
+    const sum = polishSum(E.summarise([{ ...p, weight: 1 }], q.replace(/\bsite:\S+/, '') || p.title, { n: 6, type: 'topic' }));
     const box = document.createElement('div');
     box.className = 'card';
     box.style.margin = '10px 0 0';
@@ -119,7 +130,7 @@ function citeLinks(idxs, docs) {
   return [...new Set(idxs)].map((i) => (docs[i] ? `<sup class="cite"><a href="${esc(docs[i].url)}" title="${esc(docs[i].title)}">${i + 1}</a></sup>` : '')).join('');
 }
 function sourcesHtml(docs) {
-  return `<ol class="sources">${docs.map((d) => `<li><a href="${esc(d.url)}">${esc(d.title || d.url)}</a> <span class="muted">· ${esc(d.source || d.host || '')}</span></li>`).join('')}</ol>`;
+  return `<ol class="sources">${docs.map((d, i) => `<li><span class="sn">${i + 1}</span><a href="${esc(d.url)}">${esc(d.title || d.url)}</a> <span class="muted">· ${esc(d.source || d.host || '')}</span></li>`).join('')}</ol>`;
 }
 function answerCard(q, sum, docs, { thumb } = {}) {
   const a = sum.answer;
@@ -163,6 +174,18 @@ async function runAll(q) {
   section('related', 'c-side', '');
   section('srcs', 'c-side', '');
 
+  const parsed = N.parseQuestion(q);
+  let fact = null;
+  const factP = parsed && parsed.kind !== 'define' ? S.factLookup(parsed, lang).then((f) => {
+    if (!f || my !== runId) return null;
+    const sentence = N.makeSentence(parsed, f.label, f.facts, { isHuman: f.isHuman, alive: f.alive });
+    if (!sentence) return null;
+    fact = { ...f, sentence };
+    section('fact', 'c-main', card('Answer', `<div class="answer"><div class="txt" style="font-size:20px;font-weight:500">${E.highlight(sentence, q)}</div>
+      <div class="meta"><span class="agree">✓ Exact fact</span><span>Source: <a href="https://www.wikidata.org/wiki/${esc(f.qid)}">Wikidata</a> · <a href="${esc(f.url)}">${esc(f.label)}</a></span></div></div>`));
+    $('#c-main').prepend(document.getElementById('fact'));
+    return fact;
+  }).catch(() => null) : Promise.resolve(null);
   const isCode = cls.type === 'code' || E.isCodeQuery(q);
   const wikiP = S.wikipedia(q, lang).catch(() => ({ hits: [], docs: [] }));
   const localP = S.localIndex(q);
@@ -203,6 +226,11 @@ async function runAll(q) {
   // Read the best web pages, then summarise everything together
   const [web, local, code, newsItems] = await Promise.all([webP, localP, codeP, newsP]);
   if (my !== runId) return;
+  // spelling: compare the query with words that actually appear in results
+  const vocab = N.buildVocab([...web.slice(0, 15).map((x) => `${x.title} ${x.snippet}`), ...wiki.docs.map((d) => d.text.slice(0, 3000))]);
+  const sp = N.spellCorrect(q, vocab);
+  const dym = wiki.suggestion && wiki.suggestion.toLowerCase() !== q.toLowerCase() ? wiki.suggestion : (sp.changed ? sp.text : null);
+  if (dym) $('#dym').innerHTML = `<p class="dym">Did you mean <a href="?q=${encodeURIComponent(dym)}">${esc(dym)}</a>?</p>`;
   const localHits = (local || []).map((x) => ({ ...x, host: S.host(x.url), local: true }));
   if (localHits.length) {
     const el = section('local', 'c-main', card('From pages you visited', localHits.slice(0, 4).map((x, i) => resultHtml(x, q, i)).join('')));
@@ -225,8 +253,16 @@ async function runAll(q) {
   if (!docs.length) {
     section('answer', 'c-main', card('', `<p class="err">No results found. Try different or fewer words${wiki.suggestion ? `, or <a href="?q=${encodeURIComponent(wiki.suggestion)}">${esc(wiki.suggestion)}</a>` : ''}.</p>`));
   } else {
-    const sum = E.summarise(docs, q, { n: 6, type: cls.type });
-    let html = answerCard(q, sum, docs, { thumb: wikiRelevant ? topWiki.thumb : null });
+    await factP;
+    const person = !!(fact?.isHuman) || (wikiRelevant && /\(born\b|\bwas born\b|\(\d{1,2} \w+ \d{4} – \d/.test(topWiki.text.slice(0, 400)));
+    const subject = wikiRelevant ? topWiki.title.replace(/\s*\(.*\)$/, '') : null;
+    const sum = polishSum(E.summarise(docs, q, { n: 6, type: cls.type }), subject, person);
+    let html = '';
+    if (cls.type === 'yesno' && sum.answer) {
+      const yn = N.yesNo(q, sum.answer.text, E.tokens);
+      if (yn) html += card('', `<div class="answer"><div class="big">${yn === 'Yes' ? 'Likely yes' : 'Likely no'}</div><div class="muted" style="font-size:13px">Based on the sources below — read them to be sure.</div></div>`);
+    }
+    html += answerCard(q, sum, docs, { thumb: wikiRelevant && !fact ? topWiki.thumb : null });
     if (cls.type === 'howto') {
       const steps = E.bestSteps(docs.flatMap((d, i) => (d.lists || []).map((l) => ({ ...l, source: i }))), q);
       if (steps) html += card(`Steps <span class="grow"></span><span style="text-transform:none;font-weight:400;letter-spacing:0">from ${esc(docs[steps.source].source)}</span>`, `<ol class="steps">${steps.items.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`);
@@ -311,7 +347,7 @@ async function runSite(site, words) {
   if (my !== runId) return;
   if (!pages.length) { section('answer', 'c-main', ''); return; }
   const docs = pages.map((p) => ({ title: p.title, text: p.text, url: p.url, host: p.host, source: p.title }));
-  const sum = E.summarise(docs, q, { n: 5 });
+  const sum = polishSum(E.summarise(docs, q, { n: 5 }));
   section('answer', 'c-main', answerCard(q, sum, docs) + pointsCard(q, sum, docs, `What ${site} says`));
   section('srcs', 'c-side', card('Pages read', sourcesHtml(docs)));
 }
@@ -341,7 +377,7 @@ async function runBlogs(q) {
   if (!pages.length) { section('answer', 'c-main', blogs.length ? '' : card('', '<p class="err">No blog posts found. Try broader words.</p>')); return; }
   const docs = pages.map((p) => ({ title: p.title, text: p.text, url: p.url, host: p.host, source: p.siteName || p.host }));
   red.filter((r) => r.text && r.text.length > 300).slice(0, 2).forEach((r) => docs.push({ title: r.title, text: r.text, url: r.url, host: 'reddit.com', source: r.source, weight: 0.7 }));
-  const sum = E.summarise(docs, q, { n: 6 });
+  const sum = polishSum(E.summarise(docs, q, { n: 6 }));
   section('answer', 'c-main', (sum.answer ? card('What bloggers say', `<div class="txt" style="font-size:16px">${E.highlight(sum.answer.text, q)}${citeLinks(sum.answer.sources, docs)}</div>`) : '') + pointsCard(q, sum, docs, 'Points made across these posts'));
   section('srcs', 'c-side', card('Posts read', sourcesHtml(docs)));
 }
@@ -359,7 +395,7 @@ async function runNews(q) {
   if (my !== runId) return;
   const docs = pages.map((p) => ({ title: p.title, text: p.text, url: p.url, host: p.host, source: p.siteName || p.host }));
   docs.push({ title: 'Headlines', text: items.map((n) => n.title + '.').join('\n'), url: `https://news.google.com/search?q=${encodeURIComponent(q)}`, source: 'Google News headlines', weight: 0.7 });
-  const sum = E.summarise(docs, q, { n: 6, type: 'latest' });
+  const sum = polishSum(E.summarise(docs, q, { n: 6, type: 'latest' }));
   section('answer', 'c-main', (sum.answer ? card('News summary', `<div class="txt" style="font-size:16px">${E.highlight(sum.answer.text, q)}${citeLinks(sum.answer.sources, docs)}</div>`) : '') + pointsCard(q, sum, docs, 'What the reports say'));
   section('srcs', 'c-side', card('Articles read', sourcesHtml(docs)));
 }

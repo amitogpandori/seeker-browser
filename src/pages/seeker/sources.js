@@ -318,6 +318,63 @@ function formatWdTime(v) {
   return `${y}${bc ? ' BC' : ''}`;
 }
 
+// ---------------------------------------------------------------- exact facts for parsed questions
+// parsed = SeekerNLP.parseQuestion(q). Finds the subject on Wikipedia/Wikidata and returns the requested
+// property values (labels resolved, dates with precision, ended roles marked).
+async function factLookup(parsed, lang = 'en') {
+  if (!parsed || !parsed.pids || !parsed.subject) return null;
+  const base = `https://${lang}.wikipedia.org/w/api.php?format=json&origin=*`;
+  const s = await get(`${base}&action=query&list=search&srlimit=4&srsearch=${enc(parsed.subject)}`, { json: true });
+  const titles = (s.query?.search || []).map((h) => h.title);
+  if (!titles.length) return null;
+  const pp = await get(`${base}&action=query&prop=pageprops&ppprop=wikibase_item&redirects=1&titles=${enc(titles.join('|'))}`, { json: true });
+  const qids = titles.map((t) => Object.values(pp.query?.pages || {}).find((p) => p.title === t || (pp.query?.redirects || []).some((r) => r.from === t && r.to === p.title))?.pageprops?.wikibase_item).filter(Boolean);
+  if (!qids.length) return null;
+  const want = [...new Set([...parsed.pids, 'P31', 'P569', 'P570', 'P19', 'P20'])];
+  const ents = await get(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qids.join('|')}&props=claims|labels|sitelinks&languages=${lang}|en&sitefilter=${lang}wiki&format=json&origin=*`, { json: true });
+  // first candidate (in search order) that actually has the property asked about
+  const qid = qids.find((id) => parsed.pids.some((p) => ents.entities?.[id]?.claims?.[p]?.length));
+  if (!qid) return null;
+  const ent = ents.entities[qid];
+  const raw = {}, need = new Set();
+  for (const pid of want) {
+    let cl = (ent.claims[pid] || []).filter((c) => c.rank !== 'deprecated' && c.mainsnak?.datavalue);
+    const current = cl.filter((c) => !c.qualifiers?.P582);
+    const pref = cl.filter((c) => c.rank === 'preferred');
+    if (['P6', 'P35', 'P169', 'P488', 'P634', 'P286', 'P1082', 'P36', 'P38'].includes(pid)) cl = pref.length ? pref : current.length ? current : cl.slice(-1);
+    raw[pid] = cl.slice(0, 5).map((c) => {
+      const v = c.mainsnak.datavalue;
+      const year = (c.qualifiers?.P585?.[0]?.datavalue?.value?.time || '').match(/^\+(\d{4})/)?.[1];
+      const ended = !!c.qualifiers?.P582;
+      if (v.type === 'wikibase-entityid') { need.add(v.value.id); return { id: v.value.id, ended, year }; }
+      if (v.type === 'time') { const m = v.value.time.match(/^([+-])(\d+)-(\d\d)-(\d\d)/); const d = m ? new Date(Date.UTC(+m[2], Math.max(0, +m[3] - 1), Math.max(1, +m[4]))) : null; return { text: formatWdTime(v.value), precision: v.value.precision, date: d && new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), ended }; }
+      if (v.type === 'quantity') { const unit = (v.value.unit.match(/Q\d+$/) || [])[0]; if (unit) need.add(unit); return { num: +v.value.amount, unit, ended, year }; }
+      if (v.type === 'string') return { text: v.value, ended };
+      if (v.type === 'monolingualtext') return { text: v.value.text, ended };
+      return null;
+    }).filter(Boolean);
+  }
+  if (need.size) {
+    const lj = await get(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${[...need].slice(0, 50).join('|')}&props=labels&languages=${lang}|en&format=json&origin=*`, { json: true }).catch(() => ({}));
+    const L = (id) => lj.entities?.[id]?.labels?.[lang]?.value || lj.entities?.[id]?.labels?.en?.value || '';
+    for (const list of Object.values(raw)) for (const v of list) {
+      if (v.id) v.text = L(v.id);
+      if (v.num !== undefined) {
+        const u = v.unit ? L(v.unit) : '';
+        const unit = { metre: 'm', 'square kilometre': 'km²', kilogram: 'kg', centimetre: 'cm', kilometre: 'km', foot: 'ft' }[u] || (u === '1' ? '' : u);
+        v.text = Number(v.num).toLocaleString('en-GB', { maximumFractionDigits: 2 }) + (unit ? ' ' + unit : '');
+      }
+    }
+  }
+  const facts = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.filter((x) => x.text)]));
+  const label = ent.labels?.[lang]?.value || ent.labels?.en?.value || parsed.subject;
+  const site = ent.sitelinks?.[`${lang}wiki`]?.title;
+  return {
+    qid, label, facts, isHuman: (facts.P31 || []).some((x) => /^human$/i.test(x.text)), alive: !(facts.P570 || []).length,
+    url: site ? `https://${lang}.wikipedia.org/wiki/${enc(site.replace(/ /g, '_'))}` : `https://www.wikidata.org/wiki/${qid}`,
+  };
+}
+
 // ---------------------------------------------------------------- news, images, code
 async function news(q, lang = 'en') {
   const hl = lang === 'en' ? 'en-IN' : lang;
@@ -369,6 +426,6 @@ async function country(name) {
 }
 async function localIndex(q) { return root.seeker?.call ? root.seeker.call('localindex.search', q, 6).catch(() => []) : []; }
 
-root.SeekerSources = { get, webSearch, blogSearch, hackerNews, reddit, readPages, extractReadable, siteSearch, parseFeed, wikipedia, wikidataFacts, news, images, stackOverflow,
+root.SeekerSources = { get, factLookup, webSearch, blogSearch, hackerNews, reddit, readPages, extractReadable, siteSearch, parseFeed, wikipedia, wikidataFacts, news, images, stackOverflow,
   geocode, weather, fxRate, dictionary, country, localIndex, isBlog, host, normUrl, ENGINE_LABEL };
 })(typeof self !== 'undefined' ? self : this);
