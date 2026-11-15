@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Download Manager</title><link rel="stylesheet" href="seeker://assets/common.css">
+<style>
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; user-select: none; }
+.tb { display: flex; gap: 4px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tb button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 66px; padding: 6px 8px; border: 0; border-radius: 8px; background: none; font-size: 12px; }
+.tb button span { font-size: 20px; line-height: 1; }
+.tb button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+.tb button:disabled { opacity: .35; }
+.tb .sep { width: 1px; background: var(--line); margin: 4px 6px; }
+.body { flex: 1; display: flex; min-height: 0; }
+nav { width: 190px; flex: none; border-right: 1px solid var(--line); padding: 10px 6px; overflow-y: auto; background: var(--panel); }
+nav button { display: flex; width: 100%; justify-content: space-between; border: 0; background: none; padding: 7px 12px; border-radius: 8px; text-align: left; }
+nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+nav button:hover:not(.on) { background: var(--bg); }
+nav .n { color: var(--muted); font-size: 12px; }
+nav h4 { margin: 14px 12px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tablewrap { flex: 1; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { position: sticky; top: 0; background: var(--bg); text-align: left; font-weight: 600; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 12px; }
+td { padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr.sel td { background: var(--accent-soft); }
+tr:hover:not(.sel) td { background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+td.name { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+td.name .ic { margin-right: 6px; }
+.pb { width: 140px; height: 14px; background: var(--line); border-radius: 7px; overflow: hidden; position: relative; display: inline-block; vertical-align: middle; }
+.pb i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.pb b { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 14px; font-weight: 600; mix-blend-mode: difference; color: #fff; }
+.st-error { color: var(--danger); } .st-completed { color: var(--ok); }
+.detail { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; max-height: 42%; overflow: auto; user-select: text; }
+.detail h3 { margin: 0 0 8px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 3px 12px; font-size: 12.5px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+.kv span { overflow-wrap: anywhere; }
+canvas.segs { width: 100%; height: 22px; border-radius: 4px; margin: 10px 0 4px; display: block; background: var(--line); }
+.dacts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.status { padding: 6px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); display: flex; gap: 18px; background: var(--panel); }
+.drop { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 20%, transparent); border: 3px dashed var(--accent); display: grid; place-items: center; font-size: 22px; font-weight: 600; z-index: 50; }
+.days { display: flex; gap: 6px; flex-wrap: wrap; }
+.days label { display: flex; flex-direction: row; gap: 4px; align-items: center; color: var(--text); margin: 0; }
+</style></head>
+<body>
+<div class="tb">
+  <button id="b-add" title="Add a link (Ctrl+N)"><span>＋</span>Add URL</button>
+  <button id="b-batch" title="Download many numbered files"><span>⋯</span>Batch</button>
+  <div class="sep"></div>
+  <button id="b-resume" disabled><span>▶</span>Resume</button>
+  <button id="b-pause" disabled><span>⏸</span>Stop</button>
+  <button id="b-pauseall"><span>⏹</span>Stop all</button>
+  <button id="b-resumeall"><span>⏵</span>Start all</button>
+  <div class="sep"></div>
+  <button id="b-delete" disabled title="Delete (Del)"><span>🗑</span>Delete</button>
+  <button id="b-clear"><span>✓</span>Clear done</button>
+  <div class="sep"></div>
+  <button id="b-sched"><span>⏰</span>Scheduler</button>
+  <button id="b-opts"><span>⚙</span>Options</button>
+</div>
+<div class="body">
+  <nav id="nav"></nav>
+  <div class="main">
+    <div class="tablewrap"><table>
+      <thead><tr><th>File name</th><th>Size</th><th>Status</th><th>Speed</th><th>Time left</th><th>Added</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table><div id="empty" class="empty" hidden>No downloads here. Click <b>Add URL</b>, paste a link, or drag a link onto this page.</div></div>
+    <div class="detail" id="detail" hidden></div>
+  </div>
+</div>
+<div class="status" id="statusbar"></div>
+
+<dialog id="d-add"><form method="dialog">
+  <h3>Add download</h3>
+  <label>Link (http/https, .m3u8 streams supported) <input class="field" id="a-url" required placeholder="https://…"></label>
+  <label>Save as (optional) <input class="field" id="a-name" placeholder="Use the server's file name"></label>
+  <label>Folder <span style="display:flex;gap:6px"><input class="field" id="a-dir" style="flex:1" placeholder="Default (sorted into category folders)"><button class="btn" type="button" id="a-browse">Browse…</button></span></label>
+  <label>Connections <input class="field" type="number" id="a-conn" min="1" max="32" value="8"></label>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn" value="later">Download later</button><button class="btn" value="schedule">Add to schedule</button><button class="btn primary" value="now">Start</button></div>
+</form></dialog>
+
+<dialog id="d-batch"><form method="dialog">
+  <h3>Batch download</h3>
+  <p class="muted" style="margin-top:0;font-size:12.5px">Use a range in square brackets, e.g.<br><code>https://site.com/photos/img[001-120].jpg</code> or <code>…/part[a-f].zip</code></p>
+  <label>Pattern <input class="field" id="b-pattern" required placeholder="https://…/file[1-20].jpg"></label>
+  <p id="b-preview" class="muted" style="font-size:12px"></p>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Add to queue</button></div>
+</form></dialog>
+
+<dialog id="d-sched"><form method="dialog">
+  <h3>Scheduler</h3>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="s-on"> Start scheduled downloads automatically</label>
+  <label>Start at <input class="field" type="time" id="s-start"></label>
+  <label>Stop at <input class="field" type="time" id="s-stop"></label>
+  <label>On these days <span class="days" id="s-days"></span></label>
+  <p class="muted" style="font-size:12px">Choose “Add to schedule” when adding a link. Downloads running at the stop time are paused and continue at the next start time — handy for overnight or off-peak data.</p>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Save</button></div>
+</form></dialog>
+
+<dialog id="d-opts"><form method="dialog">
+  <h3>Download options</h3>
+  <label>Default folder <span style="display:flex;gap:6px"><input class="field" id="o-dir" style="flex:1"><button class="btn" type="button" id="o-browse">Browse…</button></span></label>
+  <label>Connections per file (1–32) <input class="field" type="number" id="o-conn" min="1" max="32"></label>
+  <label>Downloads at the same time <input class="field" type="number" id="o-max" min="1" max="20"></label>
+  <label>Speed limit for all downloads (KB/s, 0 = unlimited) <input class="field" type="number" id="o-speed" min="0"></label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-cat"> Sort into category folders (Video, Music, Programs…)</label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-take"> Handle all browser downloads with Seeker DM</label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-clip"> Offer to download links I copy</label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-ask"> Ask before each download starts</label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-media"> Detect videos & audio on pages</label>
+  <label style="flex-direction:row;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="o-resume"> Resume unfinished downloads when Seeker starts</label>
+  <label>File types for copied links <input class="field" id="o-exts"></label>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Save</button></div>
+</form></dialog>
+
+<dialog id="d-link"><form method="dialog">
+  <h3>Refresh download link</h3>
+  <p class="muted" style="margin-top:0;font-size:12.5px">If a link expired (HTTP 403/410), open the original page, start the download again, copy the new link and paste it here. Seeker continues from where it stopped.</p>
+  <label>New link <input class="field" id="l-url" required></label>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Update & resume</button></div>
+</form></dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const CAT_ICON = { Video: '🎬', Music: '🎵', Programs: '💿', Compressed: '🗜️', Documents: '📄', Images: '🖼️', General: '📦' };
+let items = [], selected = new Set(), filter = 'all', S = null;
+
+function fmtSize(n) { if (!n) return '—'; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n.toFixed(i ? (n < 10 ? 2 : 1) : 0)} ${u[i]}`; }
+function fmtEta(s) { if (!s && s !== 0) return ''; if (s < 60) return `${s}s`; if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`; return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; }
+function pct(d) { if (d.status === 'completed') return 100; if (d.kind === 'hls') return d.hlsTotal ? Math.floor(d.hlsDone / d.hlsTotal * 100) : 0; return d.size ? Math.floor(d.received / d.size * 100) : 0; }
+const STATUS = { downloading: 'Downloading', connecting: 'Connecting…', queued: 'Queued', paused: 'Stopped', scheduled: 'Scheduled', completed: 'Complete', error: 'Error' };
+
+const FILTERS = [
+  ['all', 'All downloads', () => true],
+  ['active', 'Downloading', (d) => ['downloading', 'connecting'].includes(d.status)],
+  ['unfinished', 'Unfinished', (d) => d.status !== 'completed'],
+  ['finished', 'Finished', (d) => d.status === 'completed'],
+  ['queue', 'Queue & schedule', (d) => ['queued', 'scheduled'].includes(d.status)],
+  ['errors', 'Failed', (d) => d.status === 'error'],
+  null,
+  ...['Video', 'Music', 'Programs', 'Compressed', 'Documents', 'Images', 'General'].map((c) => ['cat:' + c, `${CAT_ICON[c]} ${c}`, (d) => d.category === c]),
+];
+function drawNav() {
+  $('#nav').innerHTML = FILTERS.map((f) => f ? `<button class="${f[0] === filter ? 'on' : ''}" data-f="${f[0]}"><span>${f[1]}</span><span class="n">${items.filter(f[2]).length || ''}</span></button>` : '<h4>Categories</h4>').join('');
+}
+$('#nav').onclick = (e) => { const b = e.target.closest('[data-f]'); if (b) { filter = b.dataset.f; draw(); } };
+
+function rowHtml(d) {
+  const p = pct(d);
+  const status = d.status === 'error' ? `<span class="st-error" title="${esc(d.error)}">Error</span>`
+    : d.status === 'completed' ? '<span class="st-completed">Complete</span>'
+    : `<span class="pb"><i style="width:${p}%"></i><b>${p}% ${STATUS[d.status] === 'Downloading' ? '' : '· ' + STATUS[d.status]}</b></span>`;
+  return `<tr data-id="${d.id}" class="${selected.has(d.id) ? 'sel' : ''}">
+    <td class="name" title="${esc(d.filename)}"><span class="ic">${CAT_ICON[d.category] || '📦'}</span>${esc(d.filename)}</td>
+    <td>${d.size ? fmtSize(d.size) : (d.received ? fmtSize(d.received) : '—')}</td>
+    <td>${status}</td>
+    <td>${d.status === 'downloading' ? fmtSize(d.speed) + '/s' : ''}</td>
+    <td>${d.status === 'downloading' ? fmtEta(d.eta) : ''}</td>
+    <td>${new Date(d.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${new Date(d.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td></tr>`;
+}
+function draw() {
+  drawNav();
+  const f = FILTERS.find((x) => x && x[0] === filter)[2];
+  const list = items.filter(f);
+  $('#rows').innerHTML = list.map(rowHtml).join('');
+  $('#empty').hidden = list.length > 0;
+  for (const id of [...selected]) if (!items.some((d) => d.id === id)) selected.delete(id);
+  updateButtons(); drawDetail(); drawStatus();
+}
+function updateRow(d) {
+  const tr = document.querySelector(`tr[data-id="${d.id}"]`);
+  if (tr) tr.outerHTML = rowHtml(d);
+}
+function updateButtons() {
+  const sel = items.filter((d) => selected.has(d.id));
+  $('#b-resume').disabled = !sel.some((d) => ['paused', 'error', 'scheduled', 'queued'].includes(d.status));
+  $('#b-pause').disabled = !sel.some((d) => ['downloading', 'connecting', 'queued'].includes(d.status));
+  $('#b-delete').disabled = !sel.length;
+}
+function drawStatus() {
+  const act = items.filter((d) => d.status === 'downloading');
+  const speed = act.reduce((a, d) => a + (d.speed || 0), 0);
+  $('#statusbar').innerHTML = `<span>${act.length} downloading</span><span>${items.filter((d) => d.status === 'queued').length} queued</span><span>Total speed: ${fmtSize(speed)}/s</span>${S?.speedLimitKB ? `<span>Speed limit: ${S.speedLimitKB} KB/s</span>` : ''}${S?.scheduler?.enabled ? `<span>Scheduler: ${S.scheduler.start}–${S.scheduler.stop}</span>` : ''}`;
+}
+function drawDetail() {
+  const d = items.find((x) => selected.size === 1 && selected.has(x.id));
+  const box = $('#detail');
+  if (!d) { box.hidden = true; return; }
+  box.hidden = false;
+  const p = pct(d);
+  const done = d.status === 'completed';
+  if (box.dataset.id !== d.id || box.dataset.status !== d.status) {
+    box.dataset.id = d.id; box.dataset.status = d.status;
+    box.innerHTML = `<h3>${esc(d.filename)}</h3>
+      <canvas class="segs" id="segs" title="Each block is a connection's part of the file (IDM-style)"></canvas>
+      <div class="kv" id="kv"></div>
+      <div class="dacts">
+        ${done ? '<button class="btn primary sm" data-a="open">Open</button>' : ''}
+        <button class="btn sm" data-a="folder">Show in folder</button>
+        ${!done ? '<button class="btn sm" data-a="startNow">Start now</button><button class="btn sm" data-a="relink">Refresh link</button>' : ''}
+        ${done ? '<button class="btn sm" data-a="sha">Verify SHA-256</button>' : ''}
+        <button class="btn sm" data-a="copy">Copy link</button>
+        ${!done ? `<label class="muted" style="font-size:12px">Connections <input class="field" type="number" min="1" max="32" value="${d.connections}" id="d-conn" style="width:60px;height:26px"></label>
+        <label class="muted" style="font-size:12px">Limit KB/s <input class="field" type="number" min="0" value="${d.speedLimitKB || 0}" id="d-lim" style="width:80px;height:26px"></label>` : ''}
+        <span id="sha" class="muted" style="font-size:12px;overflow-wrap:anywhere"></span>
+      </div>`;
+    const c = box.querySelector('#d-conn'), l = box.querySelector('#d-lim');
+    if (c) c.onchange = () => seeker.call('downloads.options', d.id, { connections: +c.value });
+    if (l) l.onchange = () => seeker.call('downloads.options', d.id, { speedLimitKB: +l.value });
+  }
+  box.querySelector('#kv').innerHTML = [
+    ['Status', d.status === 'error' ? `<span class="st-error">${esc(d.error)}</span>` : `${STATUS[d.status]} · ${p}%`],
+    ['Downloaded', `${fmtSize(d.received)}${d.size ? ' of ' + fmtSize(d.size) : ''}${d.kind === 'hls' && d.hlsTotal ? ` · ${d.hlsDone}/${d.hlsTotal} stream parts` : ''}`],
+    d.status === 'downloading' ? ['Speed', `${fmtSize(d.speed)}/s · ${fmtEta(d.eta) || 'calculating'} left`] : null,
+    ['Connections', d.kind === 'hls' ? `${Math.min(d.connections, 6)} (stream)` : d.resumable ? `${d.segments.filter((s) => s.pos <= s.end).length || 0} active of ${d.connections} · ${d.segments.length} parts` : '1 (server does not support resume)'],
+    ['Resume support', d.resumable ? 'Yes' : 'No'],
+    ['Saved to', esc(d.savePath)],
+    ['Link', `<span style="font-size:11.5px">${esc(d.url)}</span>`],
+    d.referrer ? ['From page', `<span style="font-size:11.5px">${esc(d.referrer)}</span>`] : null,
+  ].filter(Boolean).map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
+  drawSegments(d);
+}
+function drawSegments(d) {
+  const cv = document.getElementById('segs'); if (!cv) return;
+  const w = cv.clientWidth, h = cv.clientHeight, dpr = devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.body);
+  g.fillStyle = css.getPropertyValue('--line'); g.fillRect(0, 0, w, h);
+  g.fillStyle = css.getPropertyValue('--accent');
+  if (d.status === 'completed') { g.fillRect(0, 0, w, h); return; }
+  if (d.kind === 'hls' || !d.size || !d.segments.length) { g.fillRect(0, 0, w * pct(d) / 100, h); return; }
+  for (const s of d.segments) {
+    const x = (s.start / d.size) * w, x2 = (Math.min(s.pos, s.end + 1) / d.size) * w;
+    g.fillRect(x, 0, Math.max(0, x2 - x), h);
+    g.fillStyle = css.getPropertyValue('--panel'); g.fillRect(x, 0, 1, h); g.fillStyle = css.getPropertyValue('--accent');
+  }
+}
+$('#detail').onclick = async (e) => {
+  const b = e.target.closest('[data-a]'); if (!b) return;
+  const id = $('#detail').dataset.id, d = items.find((x) => x.id === id);
+  const a = b.dataset.a;
+  if (a === 'relink') { $('#l-url').value = ''; $('#d-link').showModal(); return; }
+  if (a === 'copy') { navigator.clipboard.writeText(d.url); b.textContent = 'Copied'; return; }
+  if (a === 'sha') { $('#sha').textContent = 'Calculating…'; try { $('#sha').textContent = 'SHA-256: ' + await seeker.call('downloads.checksum', id, 'sha256'); } catch (err) { $('#sha').textContent = err.message; } return; }
+  seeker.call('downloads.action', a, id);
+};
+$('#d-link').onclose = async () => {
+  if ($('#d-link').returnValue !== 'ok') return;
+  const id = $('#detail').dataset.id;
+  try { await seeker.call('downloads.refreshLink', id, $('#l-url').value.trim()); seeker.call('downloads.action', 'resume', id); } catch (e) { toast(e.message); }
+};
+
+$('#rows').addEventListener('mousedown', (e) => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const id = tr.dataset.id;
+  if (e.ctrlKey) { selected.has(id) ? selected.delete(id) : selected.add(id); }
+  else if (e.shiftKey && selected.size) {
+    const ids = [...document.querySelectorAll('#rows tr')].map((r) => r.dataset.id);
+    const a = ids.indexOf([...selected].pop()), b = ids.indexOf(id);
+    ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => selected.add(x));
+  } else if (!(e.button === 2 && selected.has(id))) { selected = new Set([id]); }
+  document.querySelectorAll('#rows tr').forEach((r) => r.classList.toggle('sel', selected.has(r.dataset.id)));
+  updateButtons(); drawDetail();
+});
+$('#rows').addEventListener('dblclick', (e) => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const d = items.find((x) => x.id === tr.dataset.id);
+  seeker.call('downloads.action', d.status === 'completed' ? 'open' : (['downloading', 'connecting'].includes(d.status) ? 'pause' : 'resume'), d.id);
+});
+const forSel = (fn) => [...selected].forEach(fn);
+$('#b-resume').onclick = () => forSel((id) => seeker.call('downloads.action', 'resume', id));
+$('#b-pause').onclick = () => forSel((id) => seeker.call('downloads.action', 'pause', id));
+$('#b-pauseall').onclick = () => seeker.call('downloads.pauseAll');
+$('#b-resumeall').onclick = () => seeker.call('downloads.resumeAll');
+$('#b-clear').onclick = () => seeker.call('downloads.clearCompleted');
+$('#b-delete').onclick = () => deleteSel();
+async function deleteSel() {
+  if (!selected.size) return;
+  const withFiles = window.confirm(`Delete ${selected.size} download(s) from the list.\n\nOK = also delete the files from disk\nCancel = keep the files`);
+  for (const id of [...selected]) await seeker.call('downloads.action', 'remove', id, withFiles);
+  selected.clear();
+}
+document.addEventListener('keydown', (e) => {
+  if (document.querySelector('dialog[open]')) return;
+  if (e.key === 'Delete') deleteSel();
+  if (e.ctrlKey && e.key.toLowerCase() === 'a' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); items.forEach((d) => selected.add(d.id)); draw(); }
+  if (e.ctrlKey && e.key.toLowerCase() === 'v' && document.activeElement.tagName !== 'INPUT') navigator.clipboard.readText().then((t) => { if (/^https?:\/\//.test(t.trim())) openAdd(t.trim()); }).catch(() => {});
+});
+
+// Add / batch
+async function openAdd(u = '') {
+  if (!u) { try { const t = (await navigator.clipboard.readText()).trim(); if (/^https?:\/\/\S+$/.test(t)) u = t; } catch {} }
+  $('#a-url').value = u; $('#a-name').value = ''; $('#a-dir').value = ''; $('#a-conn').value = S?.maxConnections || 8;
+  $('#d-add').showModal();
+}
+$('#b-add').onclick = () => openAdd();
+$('#a-browse').onclick = async () => { const p = await seeker.call('downloads.chooseFolder'); if (p) $('#a-dir').value = p; };
+$('#d-add').onclose = async () => {
+  const v = $('#d-add').returnValue;
+  if (!['now', 'later', 'schedule'].includes(v)) return;
+  toast('Checking link…');
+  try {
+    await seeker.call('downloads.add', { url: $('#a-url').value.trim(), filename: $('#a-name').value.trim() || undefined, dir: $('#a-dir').value.trim() || undefined, connections: +$('#a-conn').value, startMode: v === 'later' ? 'paused' : v });
+    toast('Added');
+  } catch (e) { toast(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
+};
+$('#b-batch').onclick = () => { $('#b-pattern').value = ''; $('#b-preview').textContent = ''; $('#d-batch').showModal(); };
+$('#b-pattern').oninput = () => {
+  const m = $('#b-pattern').value.match(/\[([0-9]+|[a-zA-Z])-([0-9]+|[a-zA-Z])\]/);
+  $('#b-preview').textContent = m ? `Will add ${/\d/.test(m[1]) ? Math.abs(+m[2] - +m[1]) + 1 : Math.abs(m[2].charCodeAt(0) - m[1].charCodeAt(0)) + 1} files to the queue.` : 'Add a [from-to] range to the link.';
+};
+$('#d-batch').onclose = async () => {
+  if ($('#d-batch').returnValue !== 'ok') return;
+  toast('Adding files…');
+  try { const r = await seeker.call('downloads.add', { url: $('#b-pattern').value.trim() }); toast(`Added ${Array.isArray(r) ? r.filter((x) => !x.error).length : 1} files to the queue`); } catch (e) { toast(e.message); }
+};
+
+// Scheduler & options
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+$('#b-sched').onclick = () => {
+  const sc = S.scheduler;
+  $('#s-on').checked = sc.enabled; $('#s-start').value = sc.start; $('#s-stop').value = sc.stop;
+  $('#s-days').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" ${sc.days.includes(i) ? 'checked' : ''}>${d}</label>`).join('');
+  $('#d-sched').showModal();
+};
+$('#d-sched').onclose = async () => {
+  if ($('#d-sched').returnValue !== 'ok') return;
+  S.scheduler = { enabled: $('#s-on').checked, start: $('#s-start').value || '02:00', stop: $('#s-stop').value || '07:00', days: [...$('#s-days').querySelectorAll('input:checked')].map((x) => +x.value) };
+  await seeker.call('settings.set', 'downloads', S); draw();
+};
+$('#b-opts').onclick = () => {
+  $('#o-dir').value = S.dir; $('#o-conn').value = S.maxConnections; $('#o-max').value = S.maxConcurrent; $('#o-speed').value = S.speedLimitKB;
+  $('#o-cat').checked = S.sortByCategory; $('#o-take').checked = S.takeOver; $('#o-clip').checked = S.clipboardMonitor; $('#o-ask').checked = S.askBeforeDownload;
+  $('#o-media').checked = S.mediaGrabber; $('#o-resume').checked = S.autoResume; $('#o-exts').value = S.captureExts;
+  $('#d-opts').showModal();
+};
+$('#o-browse').onclick = async () => { const p = await seeker.call('downloads.chooseFolder'); if (p) $('#o-dir').value = p; };
+$('#d-opts').onclose = async () => {
+  if ($('#d-opts').returnValue !== 'ok') return;
+  Object.assign(S, {
+    dir: $('#o-dir').value, maxConnections: Math.max(1, Math.min(32, +$('#o-conn').value || 8)), maxConcurrent: Math.max(1, +$('#o-max').value || 3),
+    speedLimitKB: Math.max(0, +$('#o-speed').value || 0), sortByCategory: $('#o-cat').checked, takeOver: $('#o-take').checked,
+    clipboardMonitor: $('#o-clip').checked, askBeforeDownload: $('#o-ask').checked, mediaGrabber: $('#o-media').checked, autoResume: $('#o-resume').checked, captureExts: $('#o-exts').value,
+  });
+  await seeker.call('settings.set', 'downloads', S); toast('Options saved'); drawStatus();
+};
+
+// Drag & drop links onto the page
+let dropEl = null;
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (!dropEl) { dropEl = document.createElement('div'); dropEl.className = 'drop'; dropEl.textContent = 'Drop link to download'; document.body.appendChild(dropEl); } });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget && dropEl) { dropEl.remove(); dropEl = null; } });
+document.addEventListener('drop', (e) => {
+  e.preventDefault(); dropEl?.remove(); dropEl = null;
+  const u = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split('\n')[0].trim();
+  if (/^https?:\/\//.test(u)) openAdd(u);
+});
+
+function toast(t) { const el = document.createElement('div'); el.className = 'toast'; el.textContent = t; document.body.appendChild(el); setTimeout(() => el.remove(), 2800); }
+
+seeker.on((name, data) => {
+  if (name === 'downloads.list') { items = data; draw(); }
+  else if (name === 'downloads.changed') {
+    const i = items.findIndex((x) => x.id === data.id);
+    if (i >= 0) items[i] = data; else items.unshift(data);
+    draw();
+  } else if (name === 'downloads.progress') {
+    for (const d of data) { const i = items.findIndex((x) => x.id === d.id); if (i >= 0) { items[i] = d; updateRow(d); } }
+    drawDetail(); drawStatus();
+  }
+});
+(async () => {
+  const s = await seeker.call('settings.get');
+  S = s.settings.downloads;
+  items = await seeker.call('downloads.list');
+  draw();
+})();
+</script>
+</body></html>

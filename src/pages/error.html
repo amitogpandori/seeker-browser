@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Can't open this page</title><link rel="stylesheet" href="seeker://assets/common.css">
+<style>.box{max-width:560px;margin:14vh auto;padding:0 24px}.big{font-size:56px;line-height:1}code{font-size:12px;color:var(--muted)}</style></head>
+<body><div class="box">
+<div class="big" id="emoji">🛰️</div>
+<h1 id="title">This site can't be reached</h1>
+<p id="desc" class="muted"></p>
+<ul id="tips" class="muted"></ul>
+<p><button class="btn primary" id="retry">Try again</button></p>
+<code id="code"></code>
+</div>
+<script>
+const p = new URLSearchParams(location.search);
+const url = p.get('url') || '', code = p.get('code'), desc = p.get('desc') || '', tor = p.get('tor') === '1';
+let host = url; try { host = new URL(url).hostname; } catch {}
+document.title = host || 'Error';
+const $ = (id) => document.getElementById(id);
+const tips = [];
+if (code === 'crash') {
+  $('emoji').textContent = '😵'; $('title').textContent = 'This page crashed';
+  $('desc').textContent = 'Something went wrong while showing this page (' + desc + '). Reloading usually fixes it.';
+} else if (desc.includes('NAME_NOT_RESOLVED')) {
+  $('desc').textContent = `${host}’s server address could not be found.`;
+  tips.push('Check the spelling of the address', 'Check your internet connection');
+  if (host.endsWith('.onion') && !tor) tips.unshift('.onion sites only open in a Tor window (Ctrl+Shift+U)');
+} else if (desc.includes('INTERNET_DISCONNECTED')) {
+  $('emoji').textContent = '📡'; $('title').textContent = 'No internet'; $('desc').textContent = 'Your computer is offline.';
+  tips.push('Check Wi-Fi or network cables', 'Restart your router');
+} else if (desc.includes('CERT') || desc.includes('SSL')) {
+  $('emoji').textContent = '⚠️'; $('title').textContent = 'Your connection is not private';
+  $('desc').textContent = `Seeker couldn't verify ${host}'s security certificate, so the page was blocked to protect you.`;
+} else if (desc.includes('TIMED_OUT')) {
+  $('desc').textContent = `${host} took too long to respond.`;
+  if (tor) tips.push('Tor can be slow. Try again or get a New identity.');
+} else if (desc.includes('PROXY') || desc.includes('SOCKS')) {
+  $('title').textContent = 'Tor connection problem'; $('desc').textContent = 'The Tor connection failed for this site.';
+  tips.push('Click “New identity” in the toolbar and try again');
+} else {
+  $('desc').textContent = `${host} refused to connect or isn't available.`;
+}
+$('tips').innerHTML = tips.map((t) => `<li>${t.replace(/[<>&]/g, '')}</li>`).join('');
+$('code').textContent = desc;
+$('retry').onclick = () => { if (url) location.href = url; else history.back(); };
+</script>
+</body></html>

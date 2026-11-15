@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Seeker</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<div id="top">
+  <div id="tabstrip">
+    <div id="kind-badge"></div>
+    <div id="tabs" role="tablist"></div>
+    <button id="newtab" class="ibtn" title="New tab (Ctrl+T)" data-icon="plus"></button>
+    <div class="drag-fill"></div>
+    <button id="tabsearch-btn" class="ibtn" title="Search tabs (Ctrl+Shift+A)" data-icon="chevron"></button>
+    <div class="wc-space"></div>
+  </div>
+  <div id="toolbar">
+    <button id="back" class="ibtn" title="Back (Alt+←) · right-click for menu" data-icon="back"></button>
+    <button id="forward" class="ibtn" title="Forward (Alt+→)" data-icon="forward"></button>
+    <button id="reload" class="ibtn" title="Reload (F5)" data-icon="reload"></button>
+    <button id="home" class="ibtn" title="Home" data-icon="home"></button>
+    <div id="omni">
+      <span id="site-icon" data-icon="search"></span>
+      <input id="url" spellcheck="false" autocomplete="off" placeholder="Search or type a web address — start with ? to ask AI">
+      <button id="zoom-badge" title="Reset zoom"></button>
+      <button id="star" class="ibtn small" title="Bookmark this page (Ctrl+D)" data-icon="star"></button>
+    </div>
+    <div id="tor-tools" hidden>
+      <button id="tor-identity" class="pill" title="New Tor identity: new circuits, clears this window's site data">🧅 New identity</button>
+      <button id="tor-safest" class="pill" title="Safest: JavaScript off for all sites in this window">Standard</button>
+    </div>
+    <button id="media-btn" class="ibtn" title="Video/audio found on this page — download" data-icon="video" hidden><span class="count"></span></button>
+    <button id="shield" class="ibtn" title="Ads & trackers blocked" data-icon="shield"><span class="count"></span></button>
+    <button id="dl-btn" class="ibtn" title="Downloads (Ctrl+J for manager)" data-icon="download"><svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16"/></svg></button>
+    <button id="ai-btn" class="ibtn" title="AI assistant (Ctrl+Shift+Space)" data-icon="sparkle"></button>
+    <button id="menu-btn" class="ibtn" title="Menu" data-icon="menu"></button>
+  </div>
+  <div id="bmbar"></div>
+  <div id="infobars"></div>
+  <div id="findbar" hidden>
+    <input id="find-input" placeholder="Find in page" spellcheck="false">
+    <span id="find-count"></span>
+    <button id="find-prev" class="ibtn small" title="Previous (Shift+Enter)" data-icon="up"></button>
+    <button id="find-next" class="ibtn small" title="Next (Enter)" data-icon="down"></button>
+    <button id="find-close" class="ibtn small" title="Close (Esc)" data-icon="x"></button>
+  </div>
+</div>
+
+<aside id="side" hidden>
+  <section id="ai-panel" hidden>
+    <header>
+      <b>AI assistant</b>
+      <span class="grow"></span>
+      <button id="ai-new" class="ibtn small" title="New chat" data-icon="plus"></button>
+      <button id="ai-cfg-btn" class="ibtn small" title="Choose AI model" data-icon="gear"></button>
+      <button class="ibtn small side-close" title="Close" data-icon="x"></button>
+    </header>
+    <div id="ai-cfg" hidden>
+      <label>Provider <select id="ai-provider"></select></label>
+      <label>Model
+        <div class="row"><select id="ai-model"></select><button id="ai-refresh" class="ibtn small" title="Refresh models" data-icon="reload"></button></div>
+      </label>
+      <input id="ai-model-custom" placeholder="…or type a model name and press Enter">
+      <p id="ai-help" class="muted"></p>
+      <button id="ai-keys" class="linkbtn">Add API keys in Settings →</button>
+    </div>
+    <div id="ai-msgs">
+      <div class="ai-empty">
+        <p><b>Ask anything</b>, or use the page you're on:</p>
+      </div>
+    </div>
+    <div id="ai-chips">
+      <button data-act="summarise">Summarise page</button>
+      <button data-act="points">Key points</button>
+      <button data-act="simple">Explain simply</button>
+      <button data-act="selection">Explain selection</button>
+      <button data-act="hindi">Translate → Hindi</button>
+      <button data-act="punjabi">Translate → Punjabi</button>
+      <button data-act="english">Translate → English</button>
+    </div>
+    <form id="ai-form">
+      <label class="ctx"><input type="checkbox" id="ai-usepage" checked> Use this page</label>
+      <div class="row">
+        <textarea id="ai-input" rows="2" placeholder="Message the AI… (Enter to send)"></textarea>
+        <button id="ai-send" class="pill primary" type="submit">Send</button>
+      </div>
+    </form>
+  </section>
+  <section id="dl-panel" hidden>
+    <header>
+      <b>Downloads</b><span class="grow"></span>
+      <button id="dl-manager" class="linkbtn">Open manager</button>
+      <button class="ibtn small side-close" title="Close" data-icon="x"></button>
+    </header>
+    <div id="dl-list"></div>
+  </section>
+</aside>
+
+<div id="catcher" hidden></div>
+<div id="suggest" class="popup" hidden></div>
+<div id="popover" class="popup" hidden></div>
+
+<script src="icons.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "name": "seeker-browser",
+  "productName": "Seeker",
+  "version": "1.0.0",
+  "description": "Seeker — a Chromium browser with a built-in IDM-style download manager, Tor windows, gestures and an AI assistant (free or paid models).",
+  "main": "src/main/main.js",
+  "author": "Amitoj",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/downloads.test.js && node test/ai.test.js",
+    "dist": "electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.seeker.browser",
+    "productName": "Seeker",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "package.json"],
+    "extraResources": [{ "from": "vendor/tor", "to": "tor", "filter": ["**/*"] }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.png",
+      "artifactName": "Seeker-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Seeker",
+      "runAfterFinish": true
+    }
+  }
+}

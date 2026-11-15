@@ -1,0 +1,77 @@
+name: Build Windows installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run tests (download engine + AI streaming)
+        run: npm test
+
+      - name: Bundle Tor (official Tor Expert Bundle, checksum-verified)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force vendor/tor | Out-Null
+          $base = 'https://dist.torproject.org/torbrowser/'
+          $html = (Invoke-WebRequest $base -UseBasicParsing).Content
+          $versions = [regex]::Matches($html, 'href="(\d+\.\d+(?:\.\d+)?)/"') | ForEach-Object { $_.Groups[1].Value } |
+            Sort-Object { [version]$_ } -Descending -Unique
+          $ver = $null
+          foreach ($v in $versions) {
+            $file = "tor-expert-bundle-windows-x86_64-$v.tar.gz"
+            try { Invoke-WebRequest "$base$v/$file" -OutFile $file -UseBasicParsing; $ver = $v; break } catch { }
+          }
+          if (-not $ver) { throw 'Could not download the Tor Expert Bundle' }
+          $sums = (Invoke-WebRequest "$base$ver/sha256sums-signed-build.txt" -UseBasicParsing).Content
+          if ($sums -is [byte[]]) { $sums = [Text.Encoding]::UTF8.GetString($sums) }
+          $line = ($sums -split "`n") | Where-Object { $_ -match [regex]::Escape($file) } | Select-Object -First 1
+          $expected = ($line -split '\s+')[0].Trim().ToLower()
+          $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { Remove-Item -Recurse -Force vendor/tor/*; throw "Tor checksum mismatch ($expected vs $actual)" }
+          tar -xzf $file -C vendor/tor
+          Write-Host "Bundled Tor $ver"
+          Get-ChildItem vendor/tor -Recurse -Depth 1 | Select-Object FullName
+
+      - name: Build installer
+        run: npx electron-builder --win --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Seeker-Setup
+          path: dist/*.exe
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Seeker ${{ steps.ver.outputs.version }}
+          body: |
+            Windows installer for Seeker Browser. Download **Seeker-Setup-${{ steps.ver.outputs.version }}.exe** below and run it.
+            Windows may show "Windows protected your PC" because the installer isn't code-signed: click **More info → Run anyway**.
+          files: dist/*.exe
+          make_latest: true

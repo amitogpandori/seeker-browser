@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Bookmarks</title><link rel="stylesheet" href="seeker://assets/common.css"></head>
+<body><div class="wrap">
+<h1>Bookmarks</h1>
+<input class="search" id="q" placeholder="Search bookmarks" autofocus>
+<div class="toolbar">
+  <select class="field" id="folder"><option value="">All bookmarks</option><option value="bar">Bookmarks bar</option><option value="other">Other bookmarks</option></select>
+  <button class="btn" id="add">Add bookmark</button>
+  <label class="btn" style="display:inline-flex;align-items:center">Import from Chrome/Edge/Firefox (HTML)<input type="file" id="imp" accept=".html,.htm" hidden></label>
+  <button class="btn" id="exp">Export</button>
+</div>
+<div class="card" id="list"></div>
+</div>
+<dialog id="dlg"><form method="dialog" id="f">
+  <h3 id="dlg-title">Edit bookmark</h3>
+  <label>Name <input class="field" id="f-title" required></label>
+  <label>Address <input class="field" id="f-url" required></label>
+  <label>Folder <select class="field" id="f-folder"><option value="bar">Bookmarks bar</option><option value="other">Other bookmarks</option></select></label>
+  <div class="btns"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Save</button></div>
+</form></dialog>
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+let all = [], editing = null;
+async function load() { all = await seeker.call('bookmarks.list'); draw(); }
+function draw() {
+  const q = document.getElementById('q').value.toLowerCase(), f = document.getElementById('folder').value;
+  const rows = all.filter((b) => (!f || b.folder === f) && (!q || b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q)));
+  document.getElementById('list').innerHTML = rows.map((b) => {
+    let host = ''; try { host = new URL(b.url).hostname; } catch {}
+    return `<div class="row"><img class="fav" src="https://www.google.com/s2/favicons?sz=32&domain=${esc(host)}" alt="">
+      <div class="grow ellipsis"><a href="${esc(b.url)}">${esc(b.title)}</a> <span class="sub">${esc(b.url)}</span></div>
+      <span class="tag">${b.folder === 'other' ? 'Other' : 'Bar'}</span>
+      <button class="iconbtn" data-edit="${b.id}" title="Edit">✎</button><button class="iconbtn" data-del="${b.id}" title="Delete">✕</button></div>`;
+  }).join('') || '<div class="empty">No bookmarks. Press Ctrl+D on any page to add one.</div>';
+}
+function edit(b) {
+  editing = b;
+  document.getElementById('dlg-title').textContent = b ? 'Edit bookmark' : 'Add bookmark';
+  document.getElementById('f-title').value = b?.title || '';
+  document.getElementById('f-url').value = b?.url || 'https://';
+  document.getElementById('f-folder').value = b?.folder || 'bar';
+  document.getElementById('dlg').showModal();
+}
+document.getElementById('dlg').onclose = async () => {
+  if (document.getElementById('dlg').returnValue !== 'ok') return;
+  await seeker.call('bookmarks.set', { id: editing?.id, title: document.getElementById('f-title').value, url: document.getElementById('f-url').value, folder: document.getElementById('f-folder').value });
+  load();
+};
+document.getElementById('list').onclick = async (e) => {
+  const d = e.target.closest('[data-del]'); if (d) { await seeker.call('bookmarks.remove', d.dataset.del); load(); }
+  const ed = e.target.closest('[data-edit]'); if (ed) edit(all.find((b) => b.id === ed.dataset.edit));
+};
+document.getElementById('add').onclick = () => edit(null);
+document.getElementById('q').oninput = draw;
+document.getElementById('folder').onchange = draw;
+document.getElementById('exp').onclick = () => seeker.call('bookmarks.export');
+document.getElementById('imp').onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const doc = new DOMParser().parseFromString(await file.text(), 'text/html');
+  const items = [...doc.querySelectorAll('a[href]')].map((a) => {
+    const inBar = !!a.closest('dl')?.previousElementSibling?.hasAttribute?.('personal_toolbar_folder');
+    return { url: a.getAttribute('href'), title: a.textContent.trim(), folder: inBar ? 'bar' : 'other' };
+  });
+  const n = await seeker.call('bookmarks.import', items);
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = `Imported ${n} bookmarks`; document.body.appendChild(t); setTimeout(() => t.remove(), 3000);
+  load();
+};
+seeker.on((name) => { if (name === 'bookmarks') load(); });
+document.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') e.target.style.visibility = 'hidden'; }, true);
+load();
+</script>
+</body></html>

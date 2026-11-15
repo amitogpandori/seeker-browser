@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>History</title><link rel="stylesheet" href="seeker://assets/common.css"></head>
+<body><div class="wrap">
+<h1>History</h1>
+<input class="search" id="q" placeholder="Search history" autofocus>
+<div class="toolbar">
+  <button class="btn" data-clear="3600000">Clear last hour</button>
+  <button class="btn" data-clear="86400000">Clear last 24 hours</button>
+  <button class="btn" data-clear="604800000">Clear last 7 days</button>
+  <button class="btn danger" data-clear="0">Clear all history</button>
+</div>
+<div id="list"></div>
+</div>
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+let timer;
+async function load() {
+  const items = await seeker.call('history.list', document.getElementById('q').value, 1500);
+  const groups = new Map();
+  for (const h of items) {
+    const d = new Date(h.t);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const key = d >= today ? 'Today' : d >= new Date(today - 86400000) ? 'Yesterday' : d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  }
+  document.getElementById('list').innerHTML = [...groups].map(([day, rows]) => `<h2>${esc(day)}</h2><div class="card">${rows.map((h) => {
+    let host = ''; try { host = new URL(h.url).hostname; } catch {}
+    return `<div class="row"><span class="muted" style="width:46px;font-size:12px">${new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <img class="fav" src="https://www.google.com/s2/favicons?sz=32&domain=${esc(host)}" alt="">
+      <div class="grow ellipsis"><a href="${esc(h.url)}">${esc(h.title || h.url)}</a> <span class="sub">${esc(host)}</span></div>
+      <button class="iconbtn" title="Remove" data-url="${esc(h.url)}" data-t="${h.t}">✕</button></div>`;
+  }).join('')}</div>`).join('') || '<div class="empty">No history yet.</div>';
+}
+document.getElementById('q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 150); };
+document.getElementById('list').onclick = async (e) => {
+  const b = e.target.closest('[data-url]');
+  if (b) { await seeker.call('history.remove', b.dataset.url, +b.dataset.t); load(); }
+};
+document.querySelectorAll('[data-clear]').forEach((b) => b.onclick = async () => {
+  if (!confirmBox(b.textContent)) return;
+  await seeker.call('history.clear', +b.dataset.clear); load();
+});
+function confirmBox(label) { return label.includes('all') ? window.confirm('Clear all browsing history?') : true; }
+document.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') e.target.style.visibility = 'hidden'; }, true);
+load();
+</script>
+</body></html>
