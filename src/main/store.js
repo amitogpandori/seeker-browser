@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 class JsonStore {
-  constructor(file, defaults) {
+  constructor(file, defaults, { delay = 400 } = {}) {
     this.file = file;
+    this.delay = delay;
     this.timer = null;
     let data = {};
     try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first run or corrupt */ }
@@ -14,7 +15,7 @@ class JsonStore {
   set(key, value) { this.data[key] = value; this.save(); }
   save() {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), 400);
+    this.timer = setTimeout(() => this.flush(), this.delay);
   }
   flush() {
     clearTimeout(this.timer);

@@ -34,7 +34,7 @@ const SEARCH_ENGINES = {
 };
 const DEFAULT_SETTINGS = {
   homepage: HOME, searchEngine: 'seeker', suggestEngine: 'google', theme: 'system', showBookmarksBar: true,
-  restoreSession: true, adblock: true, sleepTabsMinutes: 30, doNotTrack: true,
+  restoreSession: true, adblock: true, sleepTabsMinutes: 30, doNotTrack: true, indexPages: true,
   gestures: { swipe: true, mouse: true, rocker: true, wheelTabs: true },
   downloads: {
     ...DM_DEFAULTS, takeOver: true, clipboardMonitor: true, mediaGrabber: true, askBeforeDownload: false,
@@ -46,7 +46,7 @@ const DEFAULT_SETTINGS = {
   extensions: [],
 };
 
-let settings, bookmarks, history, sessionStore, dm, ai, tor, tray = null;
+let settings, bookmarks, history, sessionStore, pageIndex, dm, ai, tor, tray = null;
 const wins = new Set();
 const tabsByWc = new Map(); // webContents.id → { win, tab }
 const uiByWc = new Map();   // ui webContents.id → win
@@ -91,6 +91,48 @@ function updateHistoryTitle(url, title) {
   const items = history.get('items');
   for (let i = 0; i < Math.min(items.length, 20); i++) if (items[i].url === url) { items[i].title = title; history.save(); return; }
 }
+// ---- private local index of visited pages (so Seeker search finds sites no search engine lists)
+const NO_INDEX = /(bank|netbanking|paypal|paytm|phonepe|checkout|payment|billing|wallet|login|signin|sign-in|account|password|auth|oauth|mail\.|outlook\.|webmail|inbox|admin|dashboard|localhost|127\.0\.0\.1)/i;
+async function indexPage(wc) {
+  if (!settings.get('indexPages') || wc.isDestroyed()) return;
+  const url = wc.getURL();
+  if (!/^https?:/i.test(url) || NO_INDEX.test(url)) return;
+  let info;
+  try {
+    info = await wc.executeJavaScript(`(() => {
+      if (document.querySelector('input[type=password]')) return null;
+      const m = document.querySelector('article, main, [role=main]') || document.body;
+      const d = document.querySelector('meta[name=description]');
+      return { title: document.title, desc: d ? d.content : '', text: (m ? m.innerText : '').replace(/\\s+/g, ' ').slice(0, 8000) };
+    })()`, true);
+  } catch { return; }
+  if (!info || (info.text || '').length < 200) return;
+  const items = pageIndex.get('items').filter((x) => x.url !== url);
+  items.unshift({ url, title: info.title, desc: info.desc, text: info.text, t: Date.now() });
+  if (items.length > 1500) items.length = 1500;
+  pageIndex.set('items', items);
+}
+function searchPageIndex(q, n = 6) {
+  const terms = [...new Set(String(q).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])];
+  if (!terms.length) return [];
+  const out = [];
+  for (const it of pageIndex.get('items')) {
+    const title = (it.title || '').toLowerCase(), text = (it.text || '').toLowerCase(), url = it.url.toLowerCase();
+    let hits = 0, score = 0;
+    for (const t of terms) {
+      const inTitle = title.includes(t), inUrl = url.includes(t);
+      let c = 0, i = -1; while ((i = text.indexOf(t, i + 1)) >= 0 && c < 20) c++;
+      if (inTitle || inUrl || c) hits++;
+      score += (inTitle ? 3 : 0) + (inUrl ? 1.5 : 0) + Math.log(1 + c);
+    }
+    if (hits / terms.length < 0.6) continue;
+    const pos = text.indexOf(terms.find((t) => text.includes(t)) || '');
+    const snippet = pos >= 0 ? (pos > 80 ? '…' : '') + it.text.slice(Math.max(0, pos - 80), pos + 200) + '…' : (it.desc || '');
+    out.push({ url: it.url, title: it.title, snippet, text: it.text, visited: it.t, score: score * (hits / terms.length) });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, n);
+}
+
 function isBookmarked(url) { return bookmarks.get('items').some((b) => b.url === url); }
 function broadcastInternal(name, data) {
   for (const { tab } of tabsByWc.values()) {
@@ -354,7 +396,7 @@ class BrowserWin {
     wc.on('page-title-updated', (e, title) => { tab.title = title; if (this.kind === 'normal') updateHistoryTitle(wc.getURL(), title); upd(); });
     wc.on('page-favicon-updated', (e, favs) => { tab.favicon = favs[0] || null; upd(); });
     wc.on('did-start-loading', () => { tab.loading = true; upd(); });
-    wc.on('did-stop-loading', () => { tab.loading = false; upd(); });
+    wc.on('did-stop-loading', () => { tab.loading = false; upd(); if (this.kind === 'normal') setTimeout(() => indexPage(wc), 1500); });
     wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) { tab.media = []; tab.blocked = 0; tab.favicon = null; } });
     wc.on('did-navigate', (e, url) => { tab.url = url; tab.crashed = false; if (this.kind === 'normal') recordHistory(url, wc.getTitle()); upd(); this.scheduleSave(); });
     wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) { tab.url = url; if (this.kind === 'normal') recordHistory(url, wc.getTitle()); upd(); } });
@@ -1040,6 +1082,33 @@ ipcMain.handle('internal', async (e, name, ...a) => {
   const info = tabsByWc.get(e.sender.id);
   const win = info?.win;
   switch (name) {
+    case 'search.fetch': {
+      const [u, opt = {}] = a;
+      if (!/^https?:\/\//i.test(String(u))) throw new Error('Only http(s) URLs');
+      const r = await e.sender.session.fetch(u, {
+        signal: AbortSignal.timeout(Math.min(20000, opt.timeout || 9000)),
+        headers: { 'Accept-Language': 'en-GB,en;q=0.9,hi;q=0.6', Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8', ...(opt.headers || {}) },
+        redirect: 'follow',
+      });
+      const ct = r.headers.get('content-type') || '';
+      if (/^(image|video|audio|font)\//.test(ct) || /(pdf|zip|octet-stream|msdownload)/.test(ct)) { try { r.body?.cancel(); } catch { /* */ } return { status: r.status, url: r.url, contentType: ct, text: '' }; }
+      const reader = r.body.getReader();
+      const chunks = []; let total = 0;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value); total += value.length;
+        if (total > 3 * 1024 * 1024) { try { reader.cancel(); } catch { /* */ } break; }
+      }
+      const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+      const cs = ((ct.match(/charset=([\w-]+)/i) || [])[1] || 'utf-8').toLowerCase();
+      let text;
+      try { text = new TextDecoder(cs).decode(buf); } catch { text = buf.toString('utf8'); }
+      return { status: r.status, url: r.url, contentType: ct, text };
+    }
+    case 'localindex.search': return (win && win.kind !== 'normal') ? [] : searchPageIndex(a[0], a[1]);
+    case 'localindex.clear': pageIndex.set('items', []); return true;
+    case 'localindex.count': return pageIndex.get('items').length;
     case 'history.list': {
       const q = String(a[0] || '').toLowerCase();
       const items = history.get('items');
@@ -1080,7 +1149,7 @@ ipcMain.handle('internal', async (e, name, ...a) => {
     }
     case 'settings.set': {
       const [key, value] = a;
-      const allowed = ['homepage', 'searchEngine', 'suggestEngine', 'theme', 'showBookmarksBar', 'restoreSession', 'adblock', 'sleepTabsMinutes', 'doNotTrack', 'gestures', 'downloads', 'tor'];
+      const allowed = ['homepage', 'searchEngine', 'suggestEngine', 'theme', 'showBookmarksBar', 'restoreSession', 'adblock', 'sleepTabsMinutes', 'doNotTrack', 'indexPages', 'gestures', 'downloads', 'tor'];
       if (key === 'ai.key') { const ai2 = settings.get('ai'); ai2.keys[value.provider] = encryptKey(value.key); settings.set('ai', ai2); return true; }
       if (key === 'ai.baseUrl') { const ai2 = settings.get('ai'); ai2.baseUrls[value.provider] = value.url; settings.set('ai', ai2); return true; }
       if (key === 'sitePermissions.reset') { const sp = settings.get('sitePermissions'); delete sp[value]; settings.set('sitePermissions', sp); return true; }
@@ -1112,7 +1181,7 @@ ipcMain.handle('internal', async (e, name, ...a) => {
     case 'app.clearData': {
       const ses = session.fromPartition('persist:main');
       const what = a[0] || {};
-      if (what.history) history.set('items', []);
+      if (what.history) { history.set('items', []); pageIndex.set('items', []); }
       if (what.cache) await ses.clearCache();
       if (what.cookies) await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql', 'filesystem', 'shadercache'] });
       if (what.downloads) dm.clearCompleted();
@@ -1169,6 +1238,7 @@ app.whenReady().then(() => {
   bookmarks = new JsonStore(path.join(ud, 'bookmarks.json'), { items: [] });
   history = new JsonStore(path.join(ud, 'history.json'), { items: [] });
   sessionStore = new JsonStore(path.join(ud, 'session.json'), { windows: [] });
+  pageIndex = new JsonStore(path.join(ud, 'pageindex.json'), { items: [] }, { delay: 5000 });
   nativeTheme.themeSource = settings.get('theme');
   app.userAgentFallback = cleanUA(app.userAgentFallback);
 
@@ -1220,5 +1290,5 @@ app.on('before-quit', () => {
   saveSession();
   dm?.shutdown();
   tor?.stop();
-  for (const s of [settings, bookmarks, history, sessionStore]) s?.flush();
+  for (const s of [settings, bookmarks, history, sessionStore, pageIndex]) s?.flush();
 });
