@@ -11,6 +11,8 @@ const { DownloadManager, DEFAULT_SETTINGS: DM_DEFAULTS, ALL_EXTS } = require('./
 const { createAI, PROVIDERS } = require('./ai');
 const { isBlocked } = require('./adblock');
 const { TorManager } = require('./tor');
+const PV = require('./privacy');
+const crypto = require('crypto');
 
 const REPO = 'amitogpandori/seeker-browser';
 const ROOT = path.join(__dirname, '..');
@@ -35,6 +37,12 @@ const SEARCH_ENGINES = {
 const DEFAULT_SETTINGS = {
   homepage: HOME, searchEngine: 'seeker', suggestEngine: 'google', theme: 'system', showBookmarksBar: true,
   restoreSession: true, adblock: true, sleepTabsMinutes: 30, doNotTrack: true, indexPages: true,
+  privacy: {
+    mode: 'standard', blockThirdPartyCookies: true, fingerprint: true, stripTracking: true, strictReferrer: false,
+    forgetOnClose: false, clearCacheOnExit: false, lookLikeChrome: true, googleAs: 'chrome', webrtc: 'public',
+    route: 'direct', proxy: '', exceptions: ['google.com', 'youtube.com'],
+  },
+  newtab: { shortcuts: 'mostVisited', hidden: [], custom: [] },
   gestures: { swipe: true, mouse: true, rocker: true, wheelTabs: true },
   downloads: {
     ...DM_DEFAULTS, takeOver: true, clipboardMonitor: true, mediaGrabber: true, askBeforeDownload: false,
@@ -149,6 +157,79 @@ function notify(title, body, onClick) {
   n.show();
 }
 function cleanUA(ua) { return ua.replace(/\s(Electron|seeker-browser|SeekerBrowser|Seeker Browser)\/\S+/gi, ''); }
+const IDENTITY = PV.chromeIdentity(process.versions.chrome);
+const SESSION_SEED = crypto.randomBytes(16).toString('hex'); // fingerprint noise changes every time Seeker starts
+
+// ---- forget sites when their last tab closes (privacy "forget on close")
+let siteStore = null;
+const forgetTimers = new Map();
+function rememberSite(host) {
+  const site = PV.siteOf(host);
+  if (!site || !siteStore) return;
+  const list = siteStore.get('sites');
+  if (!list.includes(site)) { list.push(site); siteStore.save(); }
+}
+function openSites() {
+  const set = new Set();
+  for (const w of wins) if (w.kind === 'normal') for (const t of w.tabs) { const u = t.view?.webContents.getURL() || t.url; const h = PV.hostOf(u); if (h) set.add(PV.siteOf(h)); }
+  return set;
+}
+async function forgetSite(site, ses = session.fromPartition('persist:main')) {
+  if (!site) return;
+  const cookies = await ses.cookies.get({});
+  await Promise.all(cookies.filter((c) => PV.siteOf(c.domain.replace(/^\./, '')) === site).map((c) => {
+    const url = `http${c.secure ? 's' : ''}://${c.domain.replace(/^\./, '')}${c.path || '/'}`;
+    return ses.cookies.remove(url, c.name).catch(() => {});
+  }));
+  for (const origin of [`https://${site}`, `https://www.${site}`, `http://${site}`, `http://www.${site}`]) {
+    await ses.clearStorageData({ origin, storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql', 'filesystem', 'shadercache'] }).catch(() => {});
+  }
+  if (siteStore) { siteStore.set('sites', siteStore.get('sites').filter((x) => x !== site)); }
+}
+function scheduleForget() {
+  const pv = settings.get('privacy');
+  if (!pv.forgetOnClose || pv.mode === 'off' || !siteStore) return;
+  const open = openSites();
+  for (const site of siteStore.get('sites')) {
+    if (open.has(site) || PV.isException(site, pv.exceptions)) { clearTimeout(forgetTimers.get(site)); forgetTimers.delete(site); continue; }
+    if (forgetTimers.has(site)) continue;
+    forgetTimers.set(site, setTimeout(() => { forgetTimers.delete(site); if (!openSites().has(site)) forgetSite(site); }, 15000));
+  }
+}
+async function applyRoute() {
+  const pv = settings.get('privacy');
+  const ses = session.fromPartition('persist:main');
+  try {
+    if (pv.route === 'tor') { const port = await tor.ensure(); await ses.setProxy({ proxyRules: `socks5://127.0.0.1:${port}`, proxyBypassRules: '<-loopback>' }); }
+    else if (pv.route === 'proxy' && pv.proxy) await ses.setProxy({ proxyRules: pv.proxy.trim(), proxyBypassRules: '<local>' });
+    else await ses.setProxy({ mode: 'direct' });
+    await ses.closeAllConnections();
+    return true;
+  } catch (e) {
+    for (const w of wins) w.sendUI('toast', { text: `Couldn't route traffic ${pv.route === 'tor' ? 'through Tor' : 'through the proxy'}: ${e.message}`, kind: 'error' });
+    return false;
+  }
+}
+function tabConfig(win, url) {
+  const pv = settings.get('privacy');
+  const strict = win && win.kind !== 'normal';
+  const host = PV.hostOf(url || '');
+  const exc = !strict && host && PV.isException(host, pv.exceptions);
+  return {
+    gestures: settings.get('gestures'),
+    fp: {
+      noise: strict || (pv.fingerprint && pv.mode !== 'off'),
+      seed: strict ? win.fpSeed : SESSION_SEED,
+      exceptions: strict ? [] : pv.exceptions,
+      identity: pv.lookLikeChrome || strict ? { brands: IDENTITY.brands, major: IDENTITY.major } : null,
+      firefoxOn: pv.googleAs === 'firefox' ? ['accounts.google.com'] : [],
+      firefoxUA: PV.FIREFOX_UA,
+      evt: 'sk' + SESSION_SEED.slice(0, 10),
+      mark: '__' + SESSION_SEED.slice(10, 20),
+    },
+    exception: !!exc,
+  };
+}
 
 // ---------------------------------------------------------------- sessions
 function protocolHandler(req) {
@@ -165,28 +246,83 @@ function protocolHandler(req) {
 function setupSession(ses, kind) {
   if (configuredSessions.has(ses)) return;
   configuredSessions.add(ses);
-  ses.setUserAgent(cleanUA(ses.getUserAgent()));
+  ses.setUserAgent(IDENTITY ? IDENTITY.ua : cleanUA(ses.getUserAgent()));
   try { ses.protocol.handle('seeker', protocolHandler); } catch { /* already handled */ }
 
-  ses.webRequest.onBeforeSendHeaders((d, cb) => {
-    const h = d.requestHeaders;
-    if (settings.get('doNotTrack') || kind !== 'normal') { h.DNT = '1'; h['Sec-GPC'] = '1'; }
-    cb({ requestHeaders: h });
-  });
+  const strictKind = kind !== 'normal';
+  const P = () => settings.get('privacy');
+  const off = () => P().mode === 'off' && !strictKind;
+  const topUrlOf = (d) => {
+    if (d.resourceType === 'mainFrame') return d.url;
+    const info = tabsByWc.get(d.webContentsId);
+    if (info?.tab.view && !info.tab.view.webContents.isDestroyed()) { const u = info.tab.view.webContents.getURL(); if (u) return u; }
+    let top = '';
+    try { top = d.frame?.top?.url || ''; } catch { /* frame gone */ }
+    if (!top) { const r = d.referrer || getHeader(d.requestHeaders, 'referer'); top = Array.isArray(r) ? r[0] : (r || ''); }
+    return top;
+  };
+  const setHeader = (h, name, value) => { for (const k of Object.keys(h)) if (k.toLowerCase() === name.toLowerCase()) delete h[k]; if (value !== null) h[name] = value; };
+  const getHeader = (h, name) => { const k = Object.keys(h || {}).find((x) => x.toLowerCase() === name.toLowerCase()); return k ? h[k] : undefined; };
+  const bump = (d, field) => { const info = tabsByWc.get(d.webContentsId); if (info) { info.tab[field] = (info.tab[field] || 0) + 1; info.win.pushState(); } };
+
   ses.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (d, cb) => {
-    if (settings.get('adblock') && d.resourceType !== 'mainFrame' && isBlocked(d.url)) {
-      const info = tabsByWc.get(d.webContentsId);
-      if (info) { info.tab.blocked = (info.tab.blocked || 0) + 1; info.win.pushState(); }
-      return cb({ cancel: true });
+    if (settings.get('adblock') && d.resourceType !== 'mainFrame' && isBlocked(d.url)) { bump(d, 'blocked'); return cb({ cancel: true }); }
+    if ((P().stripTracking || strictKind) && !off() && (d.resourceType === 'mainFrame' || d.resourceType === 'subFrame') && d.method === 'GET') {
+      const target = PV.unwrapRedirect(d.url) || PV.cleanUrl(d.url);
+      if (target && target !== d.url) { bump(d, 'stripped'); return cb({ redirectURL: target }); }
     }
     cb({});
   });
+
+  ses.webRequest.onBeforeSendHeaders((d, cb) => {
+    const h = d.requestHeaders;
+    const pv = P();
+    const host = PV.hostOf(d.url);
+    const top = topUrlOf(d);
+    const topHost = PV.hostOf(top) || host;
+    const exc = !strictKind && PV.isException(topHost, pv.exceptions);
+    if (settings.get('doNotTrack') || strictKind) { h.DNT = '1'; h['Sec-GPC'] = '1'; }
+    // Identity: look exactly like Google Chrome (helps Google sign-in and blends in with the most common browser)
+    if (pv.lookLikeChrome || strictKind) {
+      if (getHeader(h, 'sec-ch-ua') !== undefined) setHeader(h, 'sec-ch-ua', IDENTITY.secChUa);
+      if (getHeader(h, 'sec-ch-ua-full-version-list') !== undefined) setHeader(h, 'sec-ch-ua-full-version-list', IDENTITY.secChUaFull);
+      setHeader(h, 'User-Agent', IDENTITY.ua);
+    }
+    if (pv.googleAs === 'firefox' && /(^|\.)accounts\.google\.com$/.test(host)) {
+      setHeader(h, 'User-Agent', PV.FIREFOX_UA);
+      for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k];
+    }
+    if (!off() && !exc && d.resourceType !== 'mainFrame' && topHost && !PV.sameParty(host, topHost)) {
+      // third-party request: no cookies, and at most the site's origin as referrer
+      if ((pv.blockThirdPartyCookies || strictKind) && getHeader(h, 'cookie') !== undefined) { setHeader(h, 'Cookie', null); bump(d, 'cookies'); }
+      const ref = getHeader(h, 'referer');
+      if (ref) {
+        if (pv.strictReferrer || strictKind) setHeader(h, 'Referer', null);
+        else { try { setHeader(h, 'Referer', new URL(ref).origin + '/'); } catch { /* keep */ } }
+      }
+    } else if (!off() && (pv.strictReferrer || strictKind) && d.resourceType === 'mainFrame') {
+      const ref = getHeader(h, 'referer');
+      if (ref && !PV.sameParty(PV.hostOf(ref), host)) { try { setHeader(h, 'Referer', new URL(ref).origin + '/'); } catch { /* */ } }
+    }
+    cb({ requestHeaders: h });
+  });
+
   ses.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (d, cb) => {
-    cb({});
+    const pv = P();
+    const host = PV.hostOf(d.url);
+    const topHost = PV.hostOf(topUrlOf(d)) || host;
+    let headers = null;
+    if (!off() && (pv.blockThirdPartyCookies || strictKind) && d.resourceType !== 'mainFrame' && topHost && !PV.sameParty(host, topHost)
+        && !(!strictKind && PV.isException(topHost, pv.exceptions))) {
+      const k = Object.keys(d.responseHeaders || {}).find((x) => x.toLowerCase() === 'set-cookie');
+      if (k) { headers = { ...d.responseHeaders }; delete headers[k]; bump(d, 'cookies'); }
+    }
+    if (kind === 'normal' && pv.forgetOnClose && d.resourceType === 'mainFrame') rememberSite(host);
+    cb(headers ? { responseHeaders: headers } : {});
     if (!settings.get('downloads').mediaGrabber || d.statusCode >= 400) return;
     const info = tabsByWc.get(d.webContentsId);
     if (!info) return;
-    const hv = (n) => { const k = Object.keys(d.responseHeaders || {}).find((x) => x.toLowerCase() === n); const v = k && d.responseHeaders[k]; return Array.isArray(v) ? v[0] : v; };
+    const hv = (n) => { const v = getHeader(d.responseHeaders, n); return Array.isArray(v) ? v[0] : v; };
     const ct = (hv('content-type') || '').toLowerCase();
     const isHls = /mpegurl/.test(ct) || /\.m3u8(\?|$)/i.test(d.url);
     const isMedia = /^(video|audio)\//.test(ct) && !/mp2t/.test(ct);
@@ -290,6 +426,7 @@ class BrowserWin {
     this.htmlFullscreen = false;
     this.pendingAsks = new Map();
     this.torSafest = settings.get('tor').securityLevel === 'safest';
+    this.fpSeed = crypto.randomBytes(16).toString('hex'); // private windows get their own fingerprint
 
     const d = dark() || kind !== 'normal';
     this.win = new BaseWindow({
@@ -379,7 +516,7 @@ class BrowserWin {
     const view = new WebContentsView({
       webPreferences: {
         preload: path.join(ROOT, 'preload', 'tab-preload.js'),
-        partition: this.partition, contextIsolation: true, sandbox: true, spellcheck: true, safeDialogs: true,
+        partition: this.partition, contextIsolation: true, sandbox: true, spellcheck: true, safeDialogs: true, nodeIntegrationInSubFrames: true,
         javascript: !(this.kind === 'tor' && this.torSafest),
       },
     });
@@ -387,7 +524,8 @@ class BrowserWin {
     tab.view = view; tab.sleeping = false;
     const wc = view.webContents;
     tabsByWc.set(wc.id, { win: this, tab });
-    if (this.kind === 'tor') wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    const pvw = settings.get('privacy');
+    if (this.kind !== 'normal' || pvw.webrtc === 'off' || pvw.route !== 'direct') wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     else wc.setWebRTCIPHandlingPolicy('default_public_interface_only');
     wc.setVisualZoomLevelLimits(1, 3).catch(() => {});
     wc.setAudioMuted(tab.muted);
@@ -397,8 +535,8 @@ class BrowserWin {
     wc.on('page-favicon-updated', (e, favs) => { tab.favicon = favs[0] || null; upd(); });
     wc.on('did-start-loading', () => { tab.loading = true; upd(); });
     wc.on('did-stop-loading', () => { tab.loading = false; upd(); if (this.kind === 'normal') setTimeout(() => indexPage(wc), 1500); });
-    wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) { tab.media = []; tab.blocked = 0; tab.favicon = null; } });
-    wc.on('did-navigate', (e, url) => { tab.url = url; tab.crashed = false; if (this.kind === 'normal') recordHistory(url, wc.getTitle()); upd(); this.scheduleSave(); });
+    wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) { tab.media = []; tab.blocked = 0; tab.cookies = 0; tab.fp = {}; tab.stripped = tab.stripped && Date.now() - (tab.strippedAt || 0) < 3000 ? tab.stripped : 0; tab.favicon = null; } });
+    wc.on('did-navigate', (e, url) => { tab.url = url; tab.crashed = false; if (this.kind === 'normal') { recordHistory(url, wc.getTitle()); scheduleForget(); } upd(); this.scheduleSave(); });
     wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) { tab.url = url; if (this.kind === 'normal') recordHistory(url, wc.getTitle()); upd(); } });
     wc.on('did-fail-load', (e, code, desc, url, isMain) => {
       if (!isMain || code === -3 || isInternal(url)) return;
@@ -470,6 +608,7 @@ class BrowserWin {
     if (this.kind === 'normal') { this.closedTabs.push({ url: tab.url, title: tab.title, index: i }); if (this.closedTabs.length > 25) this.closedTabs.shift(); }
     this.tabs.splice(i, 1);
     this.destroyView(tab);
+    if (this.kind === 'normal') setTimeout(scheduleForget, 0);
     if (!this.tabs.length) { this.win.close(); return; }
     if (this.activeId === id) {
       const opener = this.tabs.find((t) => t.id === tab.openerId);
@@ -529,6 +668,11 @@ class BrowserWin {
         active: t ? {
           ...nav(t), url: t.view?.webContents.getURL() || t.url, zoom: t.view ? Math.round(t.view.webContents.getZoomFactor() * 100) : 100,
           media: t.media.map(({ url, type, size, mime }) => ({ url, type, size, mime })), blocked: t.blocked || 0,
+          privacy: (() => {
+            const u = t.view?.webContents.getURL() || t.url; const h = PV.hostOf(u); const pv = settings.get('privacy');
+            return { host: h, site: PV.siteOf(h), mode: this.kind !== 'normal' ? 'strict' : pv.mode, exception: this.kind === 'normal' && !!h && PV.isException(h, pv.exceptions),
+              cookies: t.cookies || 0, stripped: t.stripped || 0, fp: Object.keys(t.fp || {}), route: pv.route, forget: pv.forgetOnClose };
+          })(),
           bookmarked: isBookmarked(t.view?.webContents.getURL() || t.url),
         } : null,
         closedCount: this.closedTabs.length,
@@ -746,6 +890,22 @@ class BrowserWin {
         return;
       }
       case 'torRetry': return this.openInitialTabs(null, null);
+      case 'privacyException': {
+        const pv = settings.get('privacy');
+        const site = PV.siteOf(a[0]);
+        pv.exceptions = a[1] ? [...new Set([...pv.exceptions, site])] : pv.exceptions.filter((x) => PV.siteOf(x) !== site && !PV.sameParty(x, site));
+        settings.set('privacy', pv);
+        for (const { tab: t2, win: w2 } of tabsByWc.values()) t2.view?.webContents.send('tab-config', tabConfig(w2, t2.view.webContents.getURL()));
+        wc?.reload();
+        this.pushState();
+        return true;
+      }
+      case 'forgetSite': {
+        await forgetSite(PV.siteOf(a[0]), this.ses);
+        this.sendUI('toast', { text: `Seeker forgot ${PV.siteOf(a[0])}: cookies and site data deleted` });
+        wc?.reload();
+        return true;
+      }
       case 'menu': return this.appMenu();
       case 'tabMenu': {
         const t = this.tabs.find((x) => x.id === a[0]);
@@ -913,6 +1073,7 @@ class BrowserWin {
   }
 }
 let lastFocusedNormal = null;
+let lastRoute = '';
 
 // ---------------------------------------------------------------- features
 function publicSettings() {
@@ -1053,6 +1214,18 @@ ipcMain.on('gesture', (e, action) => {
   if (info) info.win.gesture(info.tab, action);
 });
 ipcMain.on('gesture-config', (e) => { e.returnValue = settings.get('gestures'); });
+ipcMain.on('tab-config', (e) => {
+  const info = tabsByWc.get(e.sender.id);
+  let url = '';
+  try { url = e.senderFrame?.top?.url || e.sender.getURL(); } catch { /* */ }
+  e.returnValue = tabConfig(info?.win, url);
+});
+ipcMain.on('fp-attempt', (e, what) => {
+  const info = tabsByWc.get(e.sender.id);
+  if (!info || typeof what !== 'string' || what.length > 20) return;
+  (info.tab.fp ||= {})[what] = true;
+  info.win.pushState();
+});
 
 const aiRuns = new Map();
 ipcMain.handle('ai', async (e, action, arg = {}) => {
@@ -1106,6 +1279,18 @@ ipcMain.handle('internal', async (e, name, ...a) => {
       try { text = new TextDecoder(cs).decode(buf); } catch { text = buf.toString('utf8'); }
       return { status: r.status, url: r.url, contentType: ct, text };
     }
+    case 'privacy.forgetAll': {
+      const ses = session.fromPartition('persist:main');
+      const keep = settings.get('privacy').exceptions;
+      const cookies = await ses.cookies.get({});
+      await Promise.all(cookies.filter((c) => !PV.isException(c.domain.replace(/^\./, ''), keep)).map((c) => ses.cookies.remove(`http${c.secure ? 's' : ''}://${c.domain.replace(/^\./, '')}${c.path || '/'}`, c.name).catch(() => {})));
+      await ses.clearCache();
+      for (const site of siteStore.get('sites')) if (!PV.isException(site, keep)) await forgetSite(site, ses);
+      return true;
+    }
+    case 'privacy.testRoute': return applyRoute();
+    case 'newtab.get': return settings.get('newtab');
+    case 'newtab.set': { const nt = { ...settings.get('newtab'), ...a[0] }; nt.hidden = [...new Set(nt.hidden || [])].slice(-500); nt.custom = (nt.custom || []).filter((x) => /^https?:\/\//i.test(x.url)).slice(0, 24); settings.set('newtab', nt); return nt; }
     case 'localindex.search': return (win && win.kind !== 'normal') ? [] : searchPageIndex(a[0], a[1]);
     case 'localindex.clear': pageIndex.set('items', []); return true;
     case 'localindex.count': return pageIndex.get('items').length;
@@ -1126,7 +1311,8 @@ ipcMain.handle('internal', async (e, name, ...a) => {
         let host; try { host = new URL(h.url).origin; } catch { continue; }
         const c = counts.get(host) || { url: host + '/', title: h.title, n: 0 }; c.n++; counts.set(host, c);
       }
-      return [...counts.values()].sort((x, y) => y.n - x.n).slice(0, a[0] || 8);
+      const hidden = new Set(settings.get('newtab').hidden);
+      return [...counts.values()].filter((x) => !hidden.has(x.url) && !hidden.has(x.url.replace(/\/$/, ''))).sort((x, y) => y.n - x.n).slice(0, a[0] || 8);
     }
     case 'bookmarks.list': return bookmarks.get('items');
     case 'bookmarks.set': return setBookmark(a[0]);
@@ -1149,7 +1335,7 @@ ipcMain.handle('internal', async (e, name, ...a) => {
     }
     case 'settings.set': {
       const [key, value] = a;
-      const allowed = ['homepage', 'searchEngine', 'suggestEngine', 'theme', 'showBookmarksBar', 'restoreSession', 'adblock', 'sleepTabsMinutes', 'doNotTrack', 'indexPages', 'gestures', 'downloads', 'tor'];
+      const allowed = ['homepage', 'searchEngine', 'suggestEngine', 'theme', 'showBookmarksBar', 'restoreSession', 'adblock', 'sleepTabsMinutes', 'doNotTrack', 'indexPages', 'gestures', 'downloads', 'tor', 'privacy', 'newtab'];
       if (key === 'ai.key') { const ai2 = settings.get('ai'); ai2.keys[value.provider] = encryptKey(value.key); settings.set('ai', ai2); return true; }
       if (key === 'ai.baseUrl') { const ai2 = settings.get('ai'); ai2.baseUrls[value.provider] = value.url; settings.set('ai', ai2); return true; }
       if (key === 'sitePermissions.reset') { const sp = settings.get('sitePermissions'); delete sp[value]; settings.set('sitePermissions', sp); return true; }
@@ -1157,6 +1343,12 @@ ipcMain.handle('internal', async (e, name, ...a) => {
       settings.set(key, value);
       if (key === 'theme') { nativeTheme.themeSource = value; for (const w of wins) w.win.setTitleBarOverlay?.({ color: w.chromeColor(), symbolColor: dark() || w.kind !== 'normal' ? '#e8e6e3' : '#222' }); }
       if (key === 'gestures') for (const { tab } of tabsByWc.values()) tab.view?.webContents.send('gesture-config', value);
+      if (key === 'privacy') {
+        const prev = lastRoute; lastRoute = `${value.route}|${value.proxy}`;
+        if (prev !== lastRoute) applyRoute();
+        for (const { tab: t2, win: w2 } of tabsByWc.values()) t2.view?.webContents.send('tab-config', tabConfig(w2, t2.view.webContents.getURL()));
+        for (const w of wins) w.pushState();
+      }
       broadcastUI('settings', publicSettings());
       return true;
     }
@@ -1239,8 +1431,9 @@ app.whenReady().then(() => {
   history = new JsonStore(path.join(ud, 'history.json'), { items: [] });
   sessionStore = new JsonStore(path.join(ud, 'session.json'), { windows: [] });
   pageIndex = new JsonStore(path.join(ud, 'pageindex.json'), { items: [] }, { delay: 5000 });
+  siteStore = new JsonStore(path.join(ud, 'privacy-sites.json'), { sites: [] });
+  app.userAgentFallback = IDENTITY.ua;
   nativeTheme.themeSource = settings.get('theme');
-  app.userAgentFallback = cleanUA(app.userAgentFallback);
 
   dm = new DownloadManager({
     file: path.join(ud, 'downloads.json'),
@@ -1270,6 +1463,10 @@ app.whenReady().then(() => {
   tor.on('state', (st) => { for (const w of wins) if (w.kind === 'tor') w.sendUI('tor', { ...st, safest: w.torSafest }); });
 
   setupSession(session.fromPartition('persist:main'), 'normal');
+  lastRoute = `${settings.get('privacy').route}|${settings.get('privacy').proxy}`;
+  if (settings.get('privacy').route !== 'direct') applyRoute();
+  // sites left over from a crash or forced shutdown are forgotten at startup
+  if (settings.get('privacy').forgetOnClose) for (const site of [...siteStore.get('sites')]) if (!PV.isException(site, settings.get('privacy').exceptions)) forgetSite(site);
 
   const argUrls = urlsFromArgv(process.argv);
   const saved = sessionStore.get('windows');
@@ -1290,5 +1487,7 @@ app.on('before-quit', () => {
   saveSession();
   dm?.shutdown();
   tor?.stop();
+  try { if (settings?.get('privacy').clearCacheOnExit) session.fromPartition('persist:main').clearCache(); } catch { /* */ }
+  siteStore?.flush();
   for (const s of [settings, bookmarks, history, sessionStore, pageIndex]) s?.flush();
 });

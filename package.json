@@ -1,14 +1,14 @@
 {
   "name": "seeker-browser",
   "productName": "Seeker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Seeker — a Chromium browser with a built-in IDM-style download manager, Tor windows, gestures and an AI assistant (free or paid models).",
   "main": "src/main/main.js",
   "author": "Amitoj",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js && node test/nlp.test.js",
+    "test": "node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js && node test/nlp.test.js && node test/privacy.test.js",
     "dist": "electron-builder --win --x64 --publish never"
   },
   "devDependencies": {

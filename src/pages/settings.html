@@ -27,7 +27,7 @@ section { scroll-margin-top: 20px; margin-bottom: 30px; }
 </style></head>
 <body><div class="layout">
 <nav>
-  <a href="#general">General</a><a href="#privacy">Privacy & security</a><a href="#tor">Tor</a><a href="#gestures">Gestures</a>
+  <a href="#general">General</a><a href="#shield">Privacy Shield</a><a href="#google">Google sign-in</a><a href="#privacy">Privacy & security</a><a href="#tor">Tor</a><a href="#gestures">Gestures</a>
   <a href="#downloads">Downloads</a><a href="#ai">AI assistant</a><a href="#extensions">Extensions</a><a href="#about">About</a>
 </nav>
 <div class="content">
@@ -42,6 +42,31 @@ section { scroll-margin-top: 20px; margin-bottom: 30px; }
   <div class="row"><label>Continue where you left off<div class="desc">Reopen your tabs when Seeker starts</div></label><span class="switch"><input type="checkbox" data-k="restoreSession"><span></span></span></div>
   <div class="row"><label>Sleeping tabs<div class="desc">Unload tabs you haven't used for a while to save memory (your PC has 8 GB)</div></label><select class="field" data-k="sleepTabsMinutes" data-num><option value="0">Never</option><option value="10">After 10 min</option><option value="30">After 30 min</option><option value="60">After 1 hour</option><option value="180">After 3 hours</option></select></div>
   <div class="row"><label>Default browser<div class="desc">Open links from other apps in Seeker</div></label><button class="btn" id="default">Make default…</button></div>
+</div></section>
+
+<section id="shield"><h2>Privacy Shield — stop sites recognising you</h2><div class="card">
+  <div class="row"><label>Protection level<div class="desc"><b>Standard</b>: blocks cross-site tracking & fingerprinting, keeps you signed in. <b>Strict</b>: also forgets every site when you close it, hides referrers, blocks WebRTC IP leaks and clears the cache on exit.</div></label>
+    <select class="field" id="pv-mode"><option value="off">Off</option><option value="standard">Standard</option><option value="strict">Strict</option></select></div>
+  <div class="row"><label>Fingerprint protection<div class="desc">Each site sees a different, stable “device” (canvas, graphics, audio, CPU, memory, screen, battery), and it changes every time Seeker restarts</div></label><span class="switch"><input type="checkbox" data-pv="fingerprint"><span></span></span></div>
+  <div class="row"><label>Block cross-site cookies<div class="desc">Trackers embedded in pages can't set or read cookies (Google, Microsoft, Apple… sign-ins keep working)</div></label><span class="switch"><input type="checkbox" data-pv="blockThirdPartyCookies"><span></span></span></div>
+  <div class="row"><label>Remove tracking from links<div class="desc">Strips utm_, fbclid, gclid and 60+ others; skips Google/Facebook/YouTube redirect trackers</div></label><span class="switch"><input type="checkbox" data-pv="stripTracking"><span></span></span></div>
+  <div class="row"><label>Forget sites when I close them<div class="desc">Deletes a site's cookies & storage 15 s after its last tab closes (sites below are kept)</div></label><span class="switch"><input type="checkbox" data-pv="forgetOnClose"><span></span></span></div>
+  <div class="row"><label>Hide where I came from<div class="desc">Sends no referrer to other sites</div></label><span class="switch"><input type="checkbox" data-pv="strictReferrer"><span></span></span></div>
+  <div class="row"><label>Clear cache when Seeker closes</label><span class="switch"><input type="checkbox" data-pv="clearCacheOnExit"><span></span></span></div>
+  <div class="row"><label>Look like regular Google Chrome<div class="desc">Blend in with the most common browser (also needed for Google sign-in)</div></label><span class="switch"><input type="checkbox" data-pv="lookLikeChrome"><span></span></span></div>
+  <div class="row"><label>Hide my IP address from WebRTC</label><select class="field" id="pv-webrtc"><option value="public">Hide local IP (default)</option><option value="off">Hide all non-proxied IPs</option></select></div>
+  <div class="row"><label>Route all normal browsing through<div class="desc">Your IP is visible to sites unless traffic goes through Tor or a proxy/VPN</div></label>
+    <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><select class="field" id="pv-route"><option value="direct">Direct (no hiding)</option><option value="tor">Tor network</option><option value="proxy">My proxy / VPN</option></select>
+    <input class="field" id="pv-proxy" placeholder="socks5://127.0.0.1:1080" style="width:220px"></span></div>
+  <div class="row"><div class="grow"><b>Sites where the Shield is off</b> <span class="desc">— kept signed in, never forgotten, no fingerprint changes</span><div id="pv-exc" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"></div></div>
+    <span style="display:flex;gap:6px"><input class="field" id="pv-exc-add" placeholder="example.com" style="width:150px"><button class="btn sm" id="pv-exc-btn">Add</button></span></div>
+  <div class="row"><label>Forget everything now<div class="desc">Deletes cookies, cache and site data for all sites except those above</div></label><button class="btn sm danger" id="pv-forget">Forget all</button></div>
+</div></section>
+
+<section id="google"><h2>Google sign-in</h2><div class="card">
+  <div class="row"><div class="grow desc">Seeker presents itself to Google exactly like Google Chrome, and keeps Google & YouTube on the “Shield off” list so you stay signed in. If Google still says <i>“This browser or app may not be secure”</i>, switch the option below and try again.</div></div>
+  <div class="row"><label>Sign in to Google as</label><select class="field" id="pv-google"><option value="chrome">Google Chrome (recommended)</option><option value="firefox">Firefox (fallback)</option></select></div>
+  <div class="row"><div class="grow"></div><a href="https://accounts.google.com/" class="btn sm" style="text-decoration:none;line-height:26px">Sign in to Google →</a></div>
 </div></section>
 
 <section id="privacy"><h2>Privacy & security</h2><div class="card">
@@ -135,9 +160,35 @@ async function init() {
   $('#ver').textContent = info.version;
   $('#vers').textContent = `Chromium ${info.versions.chrome} · Electron ${info.versions.electron} · Node ${info.versions.node}`;
   document.querySelectorAll('[data-clear]').forEach((b) => b.onclick = async () => { await seeker.call('app.clearData', { [b.dataset.clear]: true }); toast('Cleared'); });
-  drawPerms(); drawProviders(); drawExt();
+  drawPerms(); drawProviders(); drawExt(); initPrivacy();
   seeker.call('localindex.count').then((n) => { $('#idx-count').textContent = `(${n} pages remembered)`; }).catch(() => {});
   $('#idx-clear').onclick = async () => { await seeker.call('localindex.clear'); $('#idx-count').textContent = '(0 pages remembered)'; toast('Cleared'); };
+}
+const PRESETS = {
+  off: { fingerprint: false, blockThirdPartyCookies: false, stripTracking: false, forgetOnClose: false, strictReferrer: false, clearCacheOnExit: false, webrtc: 'public' },
+  standard: { fingerprint: true, blockThirdPartyCookies: true, stripTracking: true, forgetOnClose: false, strictReferrer: false, clearCacheOnExit: false, webrtc: 'public' },
+  strict: { fingerprint: true, blockThirdPartyCookies: true, stripTracking: true, forgetOnClose: true, strictReferrer: true, clearCacheOnExit: true, webrtc: 'off' },
+};
+function initPrivacy() {
+  const P = S.privacy;
+  const save = () => { set('privacy', P); toast('Saved'); drawPv(); };
+  const drawPv = () => {
+    $('#pv-mode').value = P.mode;
+    document.querySelectorAll('[data-pv]').forEach((el) => { el.checked = !!P[el.dataset.pv]; el.disabled = P.mode === 'off' && el.dataset.pv !== 'lookLikeChrome'; });
+    $('#pv-webrtc').value = P.webrtc; $('#pv-route').value = P.route; $('#pv-proxy').value = P.proxy || ''; $('#pv-proxy').hidden = P.route !== 'proxy';
+    $('#pv-google').value = P.googleAs;
+    $('#pv-exc').innerHTML = P.exceptions.map((x) => `<span class="tag" style="display:inline-flex;gap:6px;align-items:center">${esc(x)}<button class="iconbtn" style="width:18px;height:18px;font-size:11px" data-rm="${esc(x)}">✕</button></span>`).join('') || '<span class="desc">None</span>';
+  };
+  $('#pv-mode').onchange = (e) => { P.mode = e.target.value; Object.assign(P, PRESETS[P.mode]); save(); };
+  document.querySelectorAll('[data-pv]').forEach((el) => (el.onchange = () => { P[el.dataset.pv] = el.checked; save(); }));
+  $('#pv-webrtc').onchange = (e) => { P.webrtc = e.target.value; save(); };
+  $('#pv-route').onchange = (e) => { P.route = e.target.value; if (P.route !== 'proxy' || P.proxy) save(); else drawPv(); };
+  $('#pv-proxy').onchange = (e) => { P.proxy = e.target.value.trim(); if (P.proxy && !/^(socks5?|https?):\/\/[\w.-]+:\d+$/.test(P.proxy)) { toast('Format: socks5://host:port or http://host:port'); return; } save(); };
+  $('#pv-google').onchange = (e) => { P.googleAs = e.target.value; save(); };
+  $('#pv-exc').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { P.exceptions = P.exceptions.filter((x) => x !== b.dataset.rm); save(); } };
+  $('#pv-exc-btn').onclick = () => { const v = $('#pv-exc-add').value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, ''); if (v && /\./.test(v)) { P.exceptions = [...new Set([...P.exceptions, v])]; $('#pv-exc-add').value = ''; save(); } };
+  $('#pv-forget').onclick = async () => { if (!confirm('Delete cookies, cache and site data for all sites except your Shield-off list?')) return; await seeker.call('privacy.forgetAll'); toast('Done — sites have forgotten you'); };
+  drawPv();
 }
 function drawPerms() {
   const entries = Object.entries(S.sitePermissions);

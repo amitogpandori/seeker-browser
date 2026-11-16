@@ -51,15 +51,70 @@ async function renderHome() {
   $('#hf').onsubmit = (e) => { e.preventDefault(); go($('#hq').value, 'all'); };
   bindLang();
   main.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => go(b.dataset.q, 'all')));
-  if (!window.seeker) return;
-  try {
-    const [top, bms] = await Promise.all([seeker.call('history.top', 8), seeker.call('bookmarks.list')]);
-    const tiles = [...bms.slice(0, 4), ...top].filter((t, i, a) => a.findIndex((x) => x.url === t.url) === i).slice(0, 8);
-    if (tiles.length) $('#tiles').innerHTML = `<div class="label">Shortcuts</div><div class="tiles">${tiles.map((t) => {
+  renderTiles();
+}
+async function renderTiles() {
+  const box = $('#tiles');
+  if (!box || !window.seeker) return;
+  let nt, top = [];
+  try { nt = await seeker.call('newtab.get'); } catch { return; }
+  if (nt.shortcuts === 'mostVisited') { try { top = await seeker.call('history.top', 12); } catch { /* */ } }
+  const custom = (nt.custom || []).map((c) => ({ ...c, custom: true }));
+  let tiles = nt.shortcuts === 'hidden' ? [] : [...custom, ...top.map((t) => ({ url: t.url, title: t.title }))]
+    .filter((t, i, a) => a.findIndex((x) => S.normUrl(x.url) === S.normUrl(t.url)) === i).slice(0, 10);
+  const save = async (patch) => { nt = await seeker.call('newtab.set', patch); renderTiles(); };
+  box.innerHTML = `<div class="label tiles-head">${nt.shortcuts === 'hidden' ? '' : 'Shortcuts'}<button class="tile-gear" id="t-gear" title="Customise shortcuts">⚙</button></div>
+    ${nt.shortcuts === 'hidden' ? '' : `<div class="tiles">${tiles.map((t, i) => {
       const h = S.host(t.url);
-      return `<a class="tile" href="${esc(t.url)}"><span class="ti">${esc((h[0] || '?').toUpperCase())}</span><span class="tt">${esc(t.title && t.title.length < 36 ? t.title : h)}</span></a>`;
-    }).join('')}</div>`;
-  } catch { /* */ }
+      return `<div class="tile-wrap"><a class="tile" href="${esc(t.url)}" title="${esc(t.title || h)}\n${esc(t.url)}"><span class="ti">${esc((h[0] || '?').toUpperCase())}</span><span class="tt">${esc(t.title && t.title.length < 30 ? t.title : h)}</span></a>
+        ${t.custom ? `<button class="tile-act edit" data-edit="${i}" title="Edit">✎</button>` : ''}<button class="tile-act rm" data-rm="${i}" title="Remove">✕</button></div>`;
+    }).join('')}${tiles.length < 10 ? '<button class="tile add" id="t-add"><span class="ti">+</span><span class="tt">Add shortcut</span></button>' : ''}</div>`}
+    <div id="t-menu" class="tile-menu" hidden>
+      <label><input type="radio" name="tm" value="mostVisited" ${nt.shortcuts === 'mostVisited' ? 'checked' : ''}> Most visited sites <span>+ your own shortcuts</span></label>
+      <label><input type="radio" name="tm" value="custom" ${nt.shortcuts === 'custom' ? 'checked' : ''}> My shortcuts only</label>
+      <label><input type="radio" name="tm" value="hidden" ${nt.shortcuts === 'hidden' ? 'checked' : ''}> Hide shortcuts</label>
+      ${(nt.hidden || []).length ? `<button id="t-restore">Restore ${nt.hidden.length} removed shortcut${nt.hidden.length > 1 ? 's' : ''}</button>` : ''}
+    </div>
+    <form id="t-form" class="tile-form" hidden><b id="t-form-title">Add shortcut</b><input id="t-name" placeholder="Name"><input id="t-url" placeholder="https://… or example.com" required>
+      <span><button type="button" id="t-cancel">Cancel</button><button class="go" type="submit">Done</button></span></form>`;
+  $('#t-gear').onclick = () => { $('#t-menu').hidden = !$('#t-menu').hidden; };
+  box.querySelectorAll('input[name=tm]').forEach((r) => (r.onchange = () => save({ shortcuts: r.value })));
+  if ($('#t-restore')) $('#t-restore').onclick = () => save({ hidden: [] });
+  let editing = -1;
+  const openForm = (t, idx) => {
+    editing = idx; $('#t-form').hidden = false; $('#t-form-title').textContent = idx >= 0 ? 'Edit shortcut' : 'Add shortcut';
+    $('#t-name').value = t?.title || ''; $('#t-url').value = t?.url || ''; $('#t-name').focus();
+  };
+  if ($('#t-add')) $('#t-add').onclick = () => openForm(null, -1);
+  $('#t-cancel').onclick = () => { $('#t-form').hidden = true; };
+  $('#t-form').onsubmit = (e) => {
+    e.preventDefault();
+    let url = $('#t-url').value.trim();
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    try { new URL(url); } catch { return; }
+    const item = { title: $('#t-name').value.trim() || S.host(url), url };
+    const list = [...(nt.custom || [])];
+    if (editing >= 0) { const ci = list.findIndex((c) => c.url === tiles[editing].url); if (ci >= 0) list[ci] = item; } else list.push(item);
+    save({ custom: list, shortcuts: nt.shortcuts === 'hidden' ? 'custom' : nt.shortcuts });
+  };
+  box.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); openForm(tiles[+b.dataset.edit], +b.dataset.edit); }));
+  box.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = async (e) => {
+    e.preventDefault();
+    const t = tiles[+b.dataset.rm];
+    const before = { custom: nt.custom, hidden: nt.hidden };
+    if (t.custom) await save({ custom: (nt.custom || []).filter((c) => c.url !== t.url) });
+    else await save({ hidden: [...(nt.hidden || []), t.url] });
+    undoToast(`Removed ${t.title || S.host(t.url)}`, () => save(before));
+  }));
+}
+function undoToast(text, undo) {
+  document.querySelector('.undo-toast')?.remove();
+  const el = document.createElement('div');
+  el.className = 'undo-toast';
+  el.innerHTML = `<span>${esc(text)}</span><button>Undo</button>`;
+  el.querySelector('button').onclick = () => { undo(); el.remove(); };
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
 }
 function langSelect() { return `<select id="lang" title="Language for encyclopedia & news"><option value="en">EN</option><option value="hi">हिं</option><option value="pa">ਪੰ</option></select>`; }
 function bindLang() { const l = $('#lang'); l.value = lang; l.onchange = () => { lang = l.value; try { localStorage.setItem('seeker.lang', lang); } catch { /* */ } if (QUERY) location.reload(); }; }

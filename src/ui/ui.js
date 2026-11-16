@@ -138,8 +138,11 @@ function renderToolbar() {
   const media = a?.media || [];
   $('#media-btn').hidden = !media.length;
   $('#media-btn .count').textContent = media.length || '';
-  $('#shield .count').textContent = a?.blocked ? (a.blocked > 99 ? '99+' : a.blocked) : '';
-  $('#shield').title = `${a?.blocked || 0} ads & trackers blocked on this page`;
+  const pv = a?.privacy;
+  const n = (a?.blocked || 0) + (pv?.cookies || 0) + (pv?.fp?.length || 0) + (pv?.stripped || 0);
+  $('#shield .count').textContent = n ? (n > 99 ? '99+' : n) : '';
+  $('#shield').classList.toggle('off', !!pv && (pv.exception || pv.mode === 'off'));
+  $('#shield').title = pv && (pv.exception || pv.mode === 'off') ? 'Privacy Shield is off for this site' : `Privacy Shield: ${n} things blocked on this page`;
 }
 $('#back').onclick = () => ui.cmd('back');
 $('#forward').onclick = () => ui.cmd('forward');
@@ -147,7 +150,7 @@ $('#reload').onclick = () => (S.tabs.find((t) => t.id === S.activeId)?.loading ?
 $('#home').onclick = () => ui.cmd('home');
 $('#menu-btn').onclick = () => ui.cmd('menu');
 $('#zoom-badge').onclick = () => ui.cmd('zoomReset');
-$('#shield').onclick = () => ui.cmd('settings');
+$('#shield').onclick = () => shieldPopup();
 $('#star').onclick = () => bookmarkPopup();
 $('#media-btn').onclick = () => mediaPopup();
 $('#dl-btn').onclick = () => toggleSide('downloads');
@@ -301,6 +304,31 @@ function mediaPopup() {
       ui.cmd('downloadUrl', m.url, fname);
       closePopups();
     })),
+  });
+}
+
+function shieldPopup() {
+  const a = S.active; const pv = a?.privacy;
+  if (!pv || !pv.host) { ui.cmd('settings'); return; }
+  const fpNames = { canvas: 'canvas drawing', webgl: 'graphics card', audio: 'audio', hardware: 'CPU & memory', screen: 'screen size', battery: 'battery' };
+  const on = !pv.exception && pv.mode !== 'off';
+  popover(`<h3 style="display:flex;align-items:center;gap:8px">${icon('shield')} ${esc(pv.site)}</h3>
+    <label class="chk" style="color:var(--text);font-size:13.5px"><input type="checkbox" id="sh-on" ${on ? 'checked' : ''} ${pv.mode === 'off' ? 'disabled' : ''}> Privacy Shield ${on ? 'on' : 'off'} for this site</label>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:13px;margin:4px 0 12px">
+      <span>Ads & trackers blocked</span><b>${a.blocked || 0}</b>
+      <span>Cross-site cookies blocked</span><b>${pv.cookies || 0}</b>
+      <span>Tracking removed from links</span><b>${pv.stripped || 0}</b>
+      <span>Fingerprinting blocked</span><b>${pv.fp.length ? esc(pv.fp.map((x) => fpNames[x] || x).join(', ')) : 'none seen'}</b>
+      <span>Connection</span><b>${KIND === 'tor' || pv.route === 'tor' ? 'via Tor' : pv.route === 'proxy' ? 'via your proxy' : 'direct (site sees your IP)'}</b>
+    </div>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">${pv.mode === 'off' ? 'Privacy Shield is turned off in Settings.' : on ? 'This site sees a unique-to-this-site fingerprint and can\'t follow you to other sites.' : 'Turned off so sign-in and site features work normally here.'}</p>
+    <div class="btns"><button class="pill" id="sh-set">Settings</button><button class="pill warn" id="sh-forget">Forget this site</button></div>`, $('#shield'), {
+    width: 360,
+    onMount: (p) => {
+      p.querySelector('#sh-on').onchange = (e) => { ui.cmd('privacyException', pv.host, !e.target.checked); closePopups(); };
+      p.querySelector('#sh-forget').onclick = () => { ui.cmd('forgetSite', pv.host); closePopups(); };
+      p.querySelector('#sh-set').onclick = () => { ui.cmd('settings'); closePopups(); };
+    },
   });
 }
 
