@@ -12,6 +12,7 @@ const { createAI, PROVIDERS } = require('./ai');
 const { isBlocked } = require('./adblock');
 const { TorManager } = require('./tor');
 const PV = require('./privacy');
+const { faviconDataUrl, blockRemoteRequests } = require('./favicon');
 const crypto = require('crypto');
 
 const REPO = 'amitogpandori/seeker-browser';
@@ -438,7 +439,11 @@ class BrowserWin {
       icon: fs.existsSync(ICON) ? ICON : undefined,
     });
     if (bounds?.maximized) this.win.maximize();
-    this.ui = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload', 'ui-preload.js'), contextIsolation: true, sandbox: true } });
+    // Private windows get a toolbar session of their own that can't reach the network, so nothing
+    // the toolbar renders (e.g. a tab favicon) can ever leave outside Tor / the private session.
+    const uiPartition = kind === 'normal' ? undefined : `ui-${this.partition}`;
+    if (uiPartition) blockRemoteRequests(session.fromPartition(uiPartition));
+    this.ui = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload', 'ui-preload.js'), contextIsolation: true, sandbox: true, ...(uiPartition ? { partition: uiPartition } : {}) } });
     this.ui.setBackgroundColor('#00000000');
     this.win.contentView.addChildView(this.ui);
     uiByWc.set(this.ui.webContents.id, this);
@@ -532,10 +537,20 @@ class BrowserWin {
 
     const upd = () => this.pushState();
     wc.on('page-title-updated', (e, title) => { tab.title = title; if (this.kind === 'normal') updateHistoryTitle(wc.getURL(), title); upd(); });
-    wc.on('page-favicon-updated', (e, favs) => { tab.favicon = favs[0] || null; upd(); });
+    wc.on('page-favicon-updated', (e, favs) => {
+      const src = favs[0] || null;
+      if (this.kind === 'normal') { tab.favicon = src; upd(); return; }
+      // Tor / incognito: fetch through the tab's own session (Tor proxy) and give the toolbar a data: URL.
+      const seq = tab.favSeq = (tab.favSeq || 0) + 1;
+      tab.favicon = null; upd();
+      faviconDataUrl(src, (u, init) => wc.session.fetch(u, init)).then((data) => {
+        if (!data || seq !== tab.favSeq || wc.isDestroyed() || tab.view?.webContents !== wc) return;
+        tab.favicon = data; upd();
+      });
+    });
     wc.on('did-start-loading', () => { tab.loading = true; upd(); });
     wc.on('did-stop-loading', () => { tab.loading = false; upd(); if (this.kind === 'normal') setTimeout(() => indexPage(wc), 1500); });
-    wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) { tab.media = []; tab.blocked = 0; tab.cookies = 0; tab.fp = {}; tab.stripped = tab.stripped && Date.now() - (tab.strippedAt || 0) < 3000 ? tab.stripped : 0; tab.favicon = null; } });
+    wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) { tab.media = []; tab.blocked = 0; tab.cookies = 0; tab.fp = {}; tab.stripped = tab.stripped && Date.now() - (tab.strippedAt || 0) < 3000 ? tab.stripped : 0; tab.favicon = null; tab.favSeq = (tab.favSeq || 0) + 1; } });
     wc.on('did-navigate', (e, url) => { tab.url = url; tab.crashed = false; if (this.kind === 'normal') { recordHistory(url, wc.getTitle()); scheduleForget(); } upd(); this.scheduleSave(); });
     wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) { tab.url = url; if (this.kind === 'normal') recordHistory(url, wc.getTitle()); upd(); } });
     wc.on('did-fail-load', (e, code, desc, url, isMain) => {
