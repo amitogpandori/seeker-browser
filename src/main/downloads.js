@@ -13,6 +13,7 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+const { isPersistentPartition } = require('./hardening');
 
 const CATEGORIES = {
   Compressed: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso', 'tgz', 'cab'],
@@ -120,7 +121,8 @@ class DownloadManager extends EventEmitter {
     this.schedKey = '';
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      this.items = Array.isArray(saved) ? saved : [];
+      // (older versions also saved Tor / incognito downloads: drop those)
+      this.items = Array.isArray(saved) ? saved.filter((i) => isPersistentPartition(i.partition)) : [];
     } catch { /* none yet */ }
     const auto = this.getSettings().autoResume;
     for (const it of this.items) {
@@ -591,9 +593,16 @@ class DownloadManager extends EventEmitter {
     clearTimeout(this.saveTimer);
     try {
       const data = this.items.map((i) => ({ ...i, segments: (i.segments || []).map((s) => ({ start: s.start, end: s.end, pos: s.pos })) }));
-      fs.writeFileSync(this.file + '.tmp', JSON.stringify(data));
+      // Tor / incognito downloads live in memory only: they are never written to downloads.json
+      fs.writeFileSync(this.file + '.tmp', JSON.stringify(data.filter((i) => isPersistentPartition(i.partition))));
       fs.renameSync(this.file + '.tmp', this.file);
     } catch (e) { console.error('downloads save failed', e.message); }
+  }
+  // A private (Tor / incognito) window closed: drop its downloads from the list. Finished files
+  // stay where they were saved; unfinished ones are cancelled.
+  forgetPartition(partition) {
+    if (isPersistentPartition(partition)) return;
+    for (const it of this.items.filter((i) => i.partition === partition)) this.remove(it.id, it.status !== 'completed').catch(() => {});
   }
   shutdown() {
     for (const rt of this.active.values()) { rt.paused = true; this._stop(rt); }

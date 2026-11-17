@@ -8,6 +8,7 @@ const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { JsonStore } = require('./store');
 const { DownloadManager, DEFAULT_SETTINGS: DM_DEFAULTS, ALL_EXTS } = require('./downloads');
+const HD = require('./hardening');
 const { createAI, PROVIDERS } = require('./ai');
 const { isBlocked } = require('./adblock');
 const { TorManager } = require('./tor');
@@ -196,20 +197,69 @@ function scheduleForget() {
     forgetTimers.set(site, setTimeout(() => { forgetTimers.delete(site); if (!openSites().has(site)) forgetSite(site); }, 15000));
   }
 }
+// Sessions that follow Settings → Privacy → route: the browsing session, and the default session
+// that the toolbar (tab favicons) and the update check use.
+const routedSessions = () => [session.fromPartition('persist:main'), session.defaultSession];
+// While Tor / the proxy is starting (or if it failed) traffic goes to a dead proxy: fail closed,
+// never silently direct.
+const BLACKHOLE_PROXY = { proxyRules: 'socks5://127.0.0.1:1', proxyBypassRules: '<-loopback>' };
+let routeState = 'ready'; // 'pending' | 'ready' | 'failed'
+let routeSeq = 0;
+async function blockUntilRouted() {
+  routeState = 'pending';
+  await Promise.all(routedSessions().map((s) => s.setProxy(BLACKHOLE_PROXY)));
+  await Promise.all(routedSessions().map((s) => s.closeAllConnections()));
+}
 async function applyRoute() {
   const pv = settings.get('privacy');
-  const ses = session.fromPartition('persist:main');
+  const seq = ++routeSeq;
+  const setAll = (cfg) => Promise.all(routedSessions().map((s) => s.setProxy(cfg)));
   try {
-    if (pv.route === 'tor') { const port = await tor.ensure(); await ses.setProxy({ proxyRules: `socks5://127.0.0.1:${port}`, proxyBypassRules: '<-loopback>' }); }
-    else if (pv.route === 'proxy' && pv.proxy) await ses.setProxy({ proxyRules: pv.proxy.trim(), proxyBypassRules: '<local>' });
-    else await ses.setProxy({ mode: 'direct' });
-    await ses.closeAllConnections();
+    if (pv.route !== 'direct') await blockUntilRouted();
+    let cfg;
+    if (pv.route === 'tor') { const port = await tor.ensure(); cfg = { proxyRules: `socks5://127.0.0.1:${port}`, proxyBypassRules: '<-loopback>' }; }
+    else if (pv.route === 'proxy') {
+      if (!pv.proxy || !pv.proxy.trim()) throw new Error('no proxy address is set');
+      cfg = { proxyRules: pv.proxy.trim(), proxyBypassRules: '<local>' };
+    } else cfg = { mode: 'direct' };
+    if (seq !== routeSeq) return false; // a newer route change won
+    await setAll(cfg);
+    await Promise.all(routedSessions().map((s) => s.closeAllConnections()));
+    routeState = 'ready';
+    applyWebRTC();
+    if (pv.route !== 'direct') reloadRouteErrorTabs();
     return true;
   } catch (e) {
-    for (const w of wins) w.sendUI('toast', { text: `Couldn't route traffic ${pv.route === 'tor' ? 'through Tor' : 'through the proxy'}: ${e.message}`, kind: 'error' });
+    if (seq === routeSeq) routeState = 'failed';
+    for (const w of wins) w.sendUI('toast', { text: `Couldn't route traffic ${pv.route === 'tor' ? 'through Tor' : 'through the proxy'}: ${e.message}. Browsing is blocked until this is fixed (or choose Direct in Settings → Privacy).`, kind: 'error' });
     return false;
   }
 }
+// Tabs that hit the dead proxy while Tor/the proxy was starting get reloaded once it is up.
+function reloadRouteErrorTabs() {
+  for (const { win, tab } of tabsByWc.values()) {
+    const wc = tab.view?.webContents;
+    if (win.kind === 'normal' && wc && !wc.isDestroyed() && wc.getURL().startsWith('seeker://error') && /^https?:/i.test(tab.url || '')) wc.loadURL(tab.url).catch(() => {});
+  }
+}
+// ---- WebRTC: re-applied whenever the route or the WebRTC setting changes (tabs and popups)
+const popups = new Map(); // popup webContents -> BrowserWin
+function applyWebRTC() {
+  const pv = settings.get('privacy');
+  for (const { win, tab } of tabsByWc.values()) {
+    const wc = tab.view?.webContents;
+    if (wc && !wc.isDestroyed()) wc.setWebRTCIPHandlingPolicy(HD.webrtcPolicy(win.kind, pv));
+  }
+  for (const [wc, win] of popups) if (!wc.isDestroyed()) wc.setWebRTCIPHandlingPolicy(HD.webrtcPolicy(win.kind, pv));
+}
+// ---- seeker:// pages: web content may not navigate, open or frame them
+function guardInternalNavigation(wc) {
+  const block = (e, url) => { const from = wc.getURL(); if (isInternal(url) && from && !isInternal(from)) e.preventDefault(); };
+  wc.on('will-navigate', block);
+  wc.on('will-redirect', block);
+}
+// Folders the user picked with the "Browse…" dialog on seeker://downloads
+const chosenDownloadDirs = new Set();
 function tabConfig(win, url) {
   const pv = settings.get('privacy');
   const strict = win && win.kind !== 'normal';
@@ -240,7 +290,14 @@ function protocolHandler(req) {
   else file = path.join(PAGES, `${u.hostname}.html`);
   file = path.normalize(file);
   if (!file.startsWith(PAGES) || !fs.existsSync(file)) return new Response('Not found', { status: 404 });
-  return net.fetch(pathToFileURL(file).toString());
+  return net.fetch(pathToFileURL(file).toString()).then((r) => {
+    if (!/\.html?$/i.test(file)) return r;
+    const headers = new Headers(r.headers);
+    // Internal pages can never be framed by a website, and can't load plugins or change their base URL.
+    headers.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
+    headers.set('X-Frame-Options', 'DENY');
+    return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
+  });
 }
 
 function setupSession(ses, kind) {
@@ -524,9 +581,8 @@ class BrowserWin {
     tab.view = view; tab.sleeping = false;
     const wc = view.webContents;
     tabsByWc.set(wc.id, { win: this, tab });
-    const pvw = settings.get('privacy');
-    if (this.kind !== 'normal' || pvw.webrtc === 'off' || pvw.route !== 'direct') wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
-    else wc.setWebRTCIPHandlingPolicy('default_public_interface_only');
+    wc.setWebRTCIPHandlingPolicy(HD.webrtcPolicy(this.kind, settings.get('privacy')));
+    guardInternalNavigation(wc);
     wc.setVisualZoomLevelLimits(1, 3).catch(() => {});
     wc.setAudioMuted(tab.muted);
 
@@ -561,13 +617,20 @@ class BrowserWin {
     wc.on('update-target-url', (e, url) => { if (tab.id === this.activeId) this.sendUI('hover-url', url); });
     wc.on('focus', () => { if (this.overlay) this.sendUI('close-popups'); });
     wc.setWindowOpenHandler(({ url, disposition, features }) => {
+      if (isInternal(url) && !isInternal(wc.getURL())) return { action: 'deny' }; // websites can't open seeker:// pages
       if (disposition === 'new-window' && features) {
         return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true, webPreferences: { partition: this.partition, sandbox: true, contextIsolation: true } } };
       }
       this.createTab(url, { active: disposition !== 'background-tab', openerId: tab.id });
       return { action: 'deny' };
     });
-    wc.on('did-create-window', (child) => { if (this.kind !== 'normal') child.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp'); });
+    wc.on('did-create-window', (child) => {
+      const cwc = child.webContents;
+      cwc.setWebRTCIPHandlingPolicy(HD.webrtcPolicy(this.kind, settings.get('privacy')));
+      guardInternalNavigation(cwc);
+      popups.set(cwc, this);
+      cwc.once('destroyed', () => popups.delete(cwc));
+    });
     wc.loadURL(tab.url).catch(() => {});
   }
   activate(id) {
@@ -1068,7 +1131,8 @@ class BrowserWin {
     try { const u = this.ui.webContents; u.close ? u.close() : u.destroy(); } catch { /* */ }
     wins.delete(this);
     if (this.kind !== 'normal') this.ses.clearStorageData().catch(() => {});
-    if (this.kind === 'tor' && ![...wins].some((w) => w.kind === 'tor')) tor.stop();
+    if (this.kind !== 'normal') dm.forgetPartition(this.partition);
+    if (this.kind === 'tor' && ![...wins].some((w) => w.kind === 'tor') && settings.get('privacy').route !== 'tor') tor.stop();
     if (!wins.size) onAllClosed();
   }
 }
@@ -1238,7 +1302,8 @@ ipcMain.handle('ai', async (e, action, arg = {}) => {
     case 'select': settings.set('ai', { ...cfg, provider: arg.provider ?? cfg.provider, model: arg.model ?? cfg.model }); broadcastUI('settings', publicSettings()); return true;
     case 'chat': {
       const provider = cfg.provider;
-      if (w?.kind === 'tor' && !PROVIDERS[provider].local) throw new Error('In Tor windows only local AI (Ollama / LM Studio) is allowed, so your browsing stays private. Switch provider in ⚙.');
+      const aiBase = (cfg.baseUrls?.[provider] || PROVIDERS[provider]?.base || '');
+      if (w?.kind === 'tor' && !HD.isLoopbackUrl(aiBase)) throw new Error('In Tor windows only local AI (Ollama / LM Studio) is allowed, so your browsing stays private. Switch provider in ⚙.');
       const sender = e.sender;
       return ai.chat({ id: arg.id, provider, model: cfg.model, system: arg.system, messages: arg.messages,
         onDelta: (text) => { if (!sender.isDestroyed()) sender.send('ai-delta', arg.id, text); } });
@@ -1346,6 +1411,7 @@ ipcMain.handle('internal', async (e, name, ...a) => {
       if (key === 'privacy') {
         const prev = lastRoute; lastRoute = `${value.route}|${value.proxy}`;
         if (prev !== lastRoute) applyRoute();
+        applyWebRTC();
         for (const { tab: t2, win: w2 } of tabsByWc.values()) t2.view?.webContents.send('tab-config', tabConfig(w2, t2.view.webContents.getURL()));
         for (const w of wins) w.pushState();
       }
@@ -1354,7 +1420,10 @@ ipcMain.handle('internal', async (e, name, ...a) => {
     }
     case 'downloads.list': return dm.list();
     case 'downloads.add': {
-      const opts = { ...a[0], partition: 'persist:main' };
+      const { url, filename, dir, connections, startMode, speedLimitKB } = a[0] || {};
+      const ds = settings.get('downloads');
+      if (!HD.isAllowedDownloadDir(dir, { roots: [ds.dir, app.getPath('downloads')], chosen: chosenDownloadDirs })) throw new Error('Choose the folder with “Browse…”.');
+      const opts = { url, filename, dir: dir ? path.resolve(dir) : undefined, connections, startMode, speedLimitKB, partition: 'persist:main' };
       if (/\[[^\]]+-[^\]]+\]/.test(opts.url)) return dm.addBatch(opts.url, opts);
       return dm.add(opts);
     }
@@ -1367,7 +1436,9 @@ ipcMain.handle('internal', async (e, name, ...a) => {
     case 'downloads.checksum': return dm.checksum(a[0], a[1]);
     case 'downloads.chooseFolder': {
       const r = await dialog.showOpenDialog(win?.win, { properties: ['openDirectory', 'createDirectory'] });
-      return r.canceled ? null : r.filePaths[0];
+      if (r.canceled) return null;
+      chosenDownloadDirs.add(path.resolve(r.filePaths[0]));
+      return r.filePaths[0];
     }
     case 'app.open': return win?.command(a[1] ? 'newTab' : 'navigate', a[0]);
     case 'app.clearData': {
@@ -1424,7 +1495,7 @@ app.on('second-instance', (e, argv) => {
   else new BrowserWin({ urls });
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const ud = app.getPath('userData');
   settings = new JsonStore(path.join(ud, 'settings.json'), DEFAULT_SETTINGS);
   bookmarks = new JsonStore(path.join(ud, 'bookmarks.json'), { items: [] });
@@ -1455,16 +1526,23 @@ app.whenReady().then(() => {
   dm.on('progress', (list) => { broadcastInternal('downloads.progress', list); pushDownloads(); });
   dm.on('changed', (it) => { broadcastInternal('downloads.changed', it); pushDownloads(); });
   dm.on('list', (list) => { broadcastInternal('downloads.list', list); pushDownloads(); });
+  dm.on('completed', (it) => { HD.writeMarkOfTheWeb(it.savePath, { url: it.url, referrer: it.referrer, private: !HD.isPersistentPartition(it.partition) }); });
   dm.on('completed', (it) => notify('Download complete', it.filename, () => shell.showItemInFolder(it.savePath)));
   dm.on('failed', (it) => notify('Download failed', `${it.filename}: ${it.error}`));
 
-  ai = createAI({ getConfig: () => settings.get('ai'), getKey: (p) => decryptKey(settings.get('ai').keys[p]) });
+  ai = createAI({
+    getConfig: () => settings.get('ai'), getKey: (p) => decryptKey(settings.get('ai').keys[p]),
+    // Local AI is reached directly; anything else goes through the browsing session when traffic
+    // is routed through Tor / a proxy, so it can't bypass the route.
+    fetch: (url, init) => (settings.get('privacy').route !== 'direct' && !HD.isLoopbackUrl(url)
+      ? session.fromPartition('persist:main').fetch(url, init) : fetch(url, init)),
+  });
   tor = new TorManager({ resourcesDir: process.resourcesPath, dataDir: ud });
   tor.on('state', (st) => { for (const w of wins) if (w.kind === 'tor') w.sendUI('tor', { ...st, safest: w.torSafest }); });
 
   setupSession(session.fromPartition('persist:main'), 'normal');
   lastRoute = `${settings.get('privacy').route}|${settings.get('privacy').proxy}`;
-  if (settings.get('privacy').route !== 'direct') applyRoute();
+  if (settings.get('privacy').route !== 'direct') { await blockUntilRouted(); applyRoute(); }
   // sites left over from a crash or forced shutdown are forgotten at startup
   if (settings.get('privacy').forgetOnClose) for (const site of [...siteStore.get('sites')]) if (!PV.isException(site, settings.get('privacy').exceptions)) forgetSite(site);
 

@@ -8,12 +8,14 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js && node test/nlp.test.js && node test/privacy.test.js",
+    "test:e2e": "node test/e2e/smoke.e2e.js",
+    "test": "node test/hardening.test.js && node test/downloads.test.js && node test/ai.test.js && node test/engine.test.js && node test/nlp.test.js && node test/privacy.test.js",
     "dist": "electron-builder --win --x64 --publish never"
   },
   "devDependencies": {
-    "electron": "latest",
-    "electron-builder": "^26.0.12"
+    "electron": "45.3.3",
+    "electron-builder": "^26.0.12",
+    "playwright": "1.65.1"
   },
   "build": {
     "appId": "com.seeker.browser",

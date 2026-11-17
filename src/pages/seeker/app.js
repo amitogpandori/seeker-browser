@@ -4,6 +4,17 @@
 'use strict';
 const E = SeekerEngine, S = SeekerSources, N = SeekerNLP;
 const esc = E.esc;
+// Links on this page come from websites and APIs: only plain http(s) URLs may become links
+// (never javascript:, data:, file: or seeker:).
+const safeHref = (u) => { const v = String(u ?? '').trim(); return /^https?:\/\//i.test(v) ? esc(v) : '#'; };
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const h = a.getAttribute('href');
+  if (h.startsWith('#') || h.startsWith('?')) return;
+  if (!/^https?:\/\//i.test(h)) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-reload]')) location.reload(); });
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const RAW = (params.get('q') || '').trim();
@@ -66,7 +77,7 @@ async function renderTiles() {
   box.innerHTML = `<div class="label tiles-head">${nt.shortcuts === 'hidden' ? '' : 'Shortcuts'}<button class="tile-gear" id="t-gear" title="Customise shortcuts">⚙</button></div>
     ${nt.shortcuts === 'hidden' ? '' : `<div class="tiles">${tiles.map((t, i) => {
       const h = S.host(t.url);
-      return `<div class="tile-wrap"><a class="tile" href="${esc(t.url)}" title="${esc(t.title || h)}\n${esc(t.url)}"><span class="ti">${esc((h[0] || '?').toUpperCase())}</span><span class="tt">${esc(t.title && t.title.length < 30 ? t.title : h)}</span></a>
+      return `<div class="tile-wrap"><a class="tile" href="${safeHref(t.url)}" title="${esc(t.title || h)}\n${esc(t.url)}"><span class="ti">${esc((h[0] || '?').toUpperCase())}</span><span class="tt">${esc(t.title && t.title.length < 30 ? t.title : h)}</span></a>
         ${t.custom ? `<button class="tile-act edit" data-edit="${i}" title="Edit">✎</button>` : ''}<button class="tile-act rm" data-rm="${i}" title="Remove">✕</button></div>`;
     }).join('')}${tiles.length < 10 ? '<button class="tile add" id="t-add"><span class="ti">+</span><span class="tt">Add shortcut</span></button>' : ''}</div>`}
     <div id="t-menu" class="tile-menu" hidden>
@@ -156,9 +167,9 @@ function resultHtml(r, q, i) {
   const badges = `${r.blog ? '<span class="chip blog">Blog</span>' : ''}${r.smallweb ? '<span class="chip blog">Small web</span>' : ''}${local}${r.engines && r.engines.length > 1 ? `<span class="chip" title="${esc(r.engines.map((x) => S.ENGINE_LABEL[x] || x).join(', '))}">${r.engines.length} engines</span>` : ''}${r.date ? `<span>${esc(ago(r.date))}</span>` : ''}${r.via ? `<span class="chip">${esc(r.via)}</span>` : ''}`;
   return `<div class="res">
     <div class="crumb"><img src="${favicon(r.host || S.host(r.url))}" alt="">${esc(r.host || S.host(r.url))} ${badges}</div>
-    <a class="t" href="${esc(r.url)}">${esc(r.title || r.url)}</a>
+    <a class="t" href="${safeHref(r.url)}">${esc(r.title || r.url)}</a>
     ${r.snippet ? `<div class="s">${E.highlight(r.snippet.slice(0, 320), q)}</div>` : ''}
-    <div class="acts">${r.discuss ? `<a class="lnk" href="${esc(r.discuss)}">Discussion</a>` : ''}<button class="lnk" data-site="${esc(r.host || S.host(r.url))}">Search this site</button><button class="lnk" data-read="${i}">Summarise this page</button></div>
+    <div class="acts">${r.discuss ? `<a class="lnk" href="${safeHref(r.discuss)}">Discussion</a>` : ''}<button class="lnk" data-site="${esc(r.host || S.host(r.url))}">Search this site</button><button class="lnk" data-read="${i}">Summarise this page</button></div>
   </div>`;
 }
 function bindResultActions(el, q, list) {
@@ -182,10 +193,10 @@ function bindResultActions(el, q, list) {
   }));
 }
 function citeLinks(idxs, docs) {
-  return [...new Set(idxs)].map((i) => (docs[i] ? `<sup class="cite"><a href="${esc(docs[i].url)}" title="${esc(docs[i].title)}">${i + 1}</a></sup>` : '')).join('');
+  return [...new Set(idxs)].map((i) => (docs[i] ? `<sup class="cite"><a href="${safeHref(docs[i].url)}" title="${esc(docs[i].title)}">${i + 1}</a></sup>` : '')).join('');
 }
 function sourcesHtml(docs) {
-  return `<ol class="sources">${docs.map((d, i) => `<li><span class="sn">${i + 1}</span><a href="${esc(d.url)}">${esc(d.title || d.url)}</a> <span class="muted">· ${esc(d.source || d.host || '')}</span></li>`).join('')}</ol>`;
+  return `<ol class="sources">${docs.map((d, i) => `<li><span class="sn">${i + 1}</span><a href="${safeHref(d.url)}">${esc(d.title || d.url)}</a> <span class="muted">· ${esc(d.source || d.host || '')}</span></li>`).join('')}</ol>`;
 }
 function answerCard(q, sum, docs, { thumb } = {}) {
   const a = sum.answer;
@@ -237,7 +248,7 @@ async function runAll(q) {
     if (!sentence) return null;
     fact = { ...f, sentence };
     section('fact', 'c-main', card('Answer', `<div class="answer"><div class="txt" style="font-size:20px;font-weight:500">${E.highlight(sentence, q)}</div>
-      <div class="meta"><span class="agree">✓ Exact fact</span><span>Source: <a href="https://www.wikidata.org/wiki/${esc(f.qid)}">Wikidata</a> · <a href="${esc(f.url)}">${esc(f.label)}</a></span></div></div>`));
+      <div class="meta"><span class="agree">✓ Exact fact</span><span>Source: <a href="https://www.wikidata.org/wiki/${esc(f.qid)}">Wikidata</a> · <a href="${safeHref(f.url)}">${esc(f.label)}</a></span></div></div>`));
     $('#c-main').prepend(document.getElementById('fact'));
     return fact;
   }).catch(() => null) : Promise.resolve(null);
@@ -266,14 +277,14 @@ async function runAll(q) {
     S.wikidataFacts(topWiki.qid, lang).then((facts) => {
       if (my !== runId || !facts.length) return;
       section('facts', 'c-side', card(esc(topWiki.title), `${topWiki.thumb ? `<img src="${esc(topWiki.thumb)}" alt="" style="width:100%;max-height:260px;object-fit:cover;border-radius:10px;margin-bottom:10px">` : ''}
-        <div class="facts">${facts.slice(0, 14).map((f) => `<span>${esc(f.label)}</span><span>${f.link ? `<a href="${esc(f.link)}">${esc(S.host(f.link))}</a>` : esc(f.value)}</span>`).join('')}</div>
+        <div class="facts">${facts.slice(0, 14).map((f) => `<span>${esc(f.label)}</span><span>${f.link ? `<a href="${safeHref(f.link)}">${esc(S.host(f.link))}</a>` : esc(f.value)}</span>`).join('')}</div>
         <p class="muted" style="font-size:12px;margin:10px 0 0">Source: <a href="https://www.wikidata.org/wiki/${esc(topWiki.qid)}">Wikidata</a></p>`));
     }).catch(() => {});
   }
   if (wikiRelevant && ['who', 'what', 'where', 'topic'].includes(cls.type)) {
     S.images(E.coreQuery(q)).then((imgs) => {
       if (my !== runId || imgs.length < 3) return;
-      section('imgs', 'c-side', card('Images', `<div class="imgs small">${imgs.slice(0, 6).map((x) => `<a href="${esc(x.page)}" title="${esc(x.title)}"><img src="${esc(x.thumb)}" alt="" loading="lazy"></a>`).join('')}</div>
+      section('imgs', 'c-side', card('Images', `<div class="imgs small">${imgs.slice(0, 6).map((x) => `<a href="${safeHref(x.page)}" title="${esc(x.title)}"><img src="${esc(x.thumb)}" alt="" loading="lazy"></a>`).join('')}</div>
         <p style="margin:8px 0 0;font-size:13px"><a href="?q=${encodeURIComponent(q)}&t=images">More images →</a></p>`));
     }).catch(() => {});
   }
@@ -327,7 +338,7 @@ async function runAll(q) {
     section('srcs', 'c-side', card('Sources read', sourcesHtml(docs)));
   }
   if (code.length) {
-    section('extra', 'c-main', card('Answers from Stack Overflow', code.map((c) => `<div class="code"><a class="t" href="${esc(c.url)}" style="font-weight:600">${esc(c.title)}</a>
+    section('extra', 'c-main', card('Answers from Stack Overflow', code.map((c) => `<div class="code"><a class="t" href="${safeHref(c.url)}" style="font-weight:600">${esc(c.title)}</a>
       <div class="muted" style="font-size:12px">Accepted answer · ${c.answerScore} votes · ${c.tags.slice(0, 4).map(esc).join(', ')}</div>${sanitizeSO(c.body)}</div>`).join('<hr style="border:0;border-top:1px solid var(--line)">')));
   }
   if (newsItems.length) section('news', 'c-side', card('Latest news', newsList(newsItems.slice(0, 6))));
@@ -345,7 +356,7 @@ function sanitizeSO(htmlStr) {
   return out.length > 6000 ? out.slice(0, 6000) + '…' : out;
 }
 function newsList(items) {
-  return items.map((n) => `<div class="news-item"><a href="${esc(n.url)}">${esc(n.title)}</a><div class="src">${esc(n.source)} · ${esc(ago(n.date))}</div></div>`).join('');
+  return items.map((n) => `<div class="news-item"><a href="${safeHref(n.url)}">${esc(n.title)}</a><div class="src">${esc(n.source)} · ${esc(ago(n.date))}</div></div>`).join('');
 }
 
 // ---------------------------------------------------------------- comparisons
@@ -425,7 +436,7 @@ async function runBlogs(q) {
   draw(blogs);
   const red = await redditP;
   if (red.length) {
-    section('disc', 'c-side', card('Discussions on Reddit', red.slice(0, 6).map((x) => `<div class="news-item"><a href="${esc(x.url)}">${esc(x.title)}</a><div class="src">${esc(x.source)} · ${esc(x.snippet.slice(0, 80))}</div></div>`).join('')));
+    section('disc', 'c-side', card('Discussions on Reddit', red.slice(0, 6).map((x) => `<div class="news-item"><a href="${safeHref(x.url)}">${esc(x.title)}</a><div class="src">${esc(x.source)} · ${esc(x.snippet.slice(0, 80))}</div></div>`).join('')));
   }
   const pages = await S.readPages(blogs.filter((x) => !/news\.ycombinator\.com/.test(x.url)), 5);
   if (my !== runId) return;
@@ -458,7 +469,7 @@ async function runImages(q) {
   section('web', 'c-main', card('Images', loading()));
   const imgs = await S.images(q).catch(() => []);
   section('web', 'c-main', card(`Images <span class="grow"></span><span style="text-transform:none;font-weight:400;letter-spacing:0">Wikimedia Commons · free to reuse</span>`,
-    imgs.length ? `<div class="imgs">${imgs.map((x) => `<a href="${esc(x.page)}" title="${esc(x.title)} · ${esc(x.license)}"><img src="${esc(x.thumb)}" alt="${esc(x.title)}" loading="lazy"></a>`).join('')}</div>` : '<p class="err">No images found.</p>')
+    imgs.length ? `<div class="imgs">${imgs.map((x) => `<a href="${safeHref(x.page)}" title="${esc(x.title)} · ${esc(x.license)}"><img src="${esc(x.thumb)}" alt="${esc(x.title)}" loading="lazy"></a>`).join('')}</div>` : '<p class="err">No images found.</p>')
     + `<p style="font-size:13px">More: <a href="https://duckduckgo.com/?q=${encodeURIComponent(q)}&iax=images&ia=images">DuckDuckGo Images</a> · <a href="https://www.bing.com/images/search?q=${encodeURIComponent(q)}">Bing Images</a></p>`);
   $('#c-side').remove(); $('.wrap').style.gridTemplateColumns = '1fr';
 }
@@ -470,7 +481,7 @@ async function instant(r) {
     case 'maths': return card('Calculator', `<div class="answer"><div class="muted">${esc(r.expr)} =</div><div class="big">${fmt(r.value, 10)}</div><div class="muted" style="font-size:13px">Trig functions use degrees.</div></div>`);
     case 'units': return card('Unit converter', `<div class="answer"><div class="muted">${fmt(r.v)} ${esc(r.from)} =</div><div class="big">${fmt(r.r, 4)} ${esc(r.to)}</div></div>`);
     case 'date': return card('Date', `<div class="answer"><div class="muted">${esc(r.title)}</div><div class="big">${esc(r.value)}</div>${r.sub ? `<div class="muted">${esc(r.sub)}</div>` : ''}</div>`);
-    case 'random': return card(esc(r.title), `<div class="answer"><div class="big">${esc(r.value)}</div><button class="lnk" onclick="location.reload()">Again</button></div>`);
+    case 'random': return card(esc(r.title), `<div class="answer"><div class="big">${esc(r.value)}</div><button class="lnk" data-reload="1">Again</button></div>`);
     case 'currency': {
       const x = await S.fxRate(r.from, r.to);
       return card('Currency', `<div class="answer"><div class="muted">${fmt(r.amount, 2)} ${r.from} =</div><div class="big">${fmt(r.amount * x.rate, 2)} ${r.to}</div><div class="muted" style="font-size:13px">1 ${r.from} = ${fmt(x.rate, 4)} ${r.to} · ${esc(x.date)} · ${esc(x.src)}</div></div>`);

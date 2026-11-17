@@ -13,8 +13,10 @@ const PROVIDERS = {
   custom:     { name: 'Custom (any OpenAI-compatible server)', base: '', key: 'optional', help: 'Enter the base URL ending in /v1.' },
 };
 
-function createAI({ getConfig, getKey }) {
+function createAI({ getConfig, getKey, fetch: fetchImpl }) {
   const running = new Map();
+  // main.js passes a fetch that follows the Tor / proxy route for non-local providers
+  const fetch = fetchImpl || globalThis.fetch;
 
   function endpoint(provider) {
     const cfg = getConfig();
