@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#1C1B1F</color>
+    <color name="panel">#26262A</color>
+    <color name="text">#E8EAED</color>
+    <color name="muted">#9AA0A6</color>
+    <color name="line">#3A3B3F</color>
+    <color name="accent">#8AB4F8</color>
+    <color name="accent_soft">#283A55</color>
+    <color name="on_accent">#111111</color>
+    <color name="danger">#F28B82</color>
+    <color name="ok">#81C995</color>
+    <color name="chrome">#202124</color>
+    <color name="seg_track">#3A3B3F</color>
+</resources>

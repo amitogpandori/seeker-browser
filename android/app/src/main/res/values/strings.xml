@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Seeker</string>
+    <string name="address_hint">Search or type a web address</string>
+    <string name="downloads">Downloads</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="history">History</string>
+    <string name="new_tab">New tab</string>
+    <string name="new_incognito_tab">New incognito tab</string>
+    <string name="tabs">Tabs</string>
+    <string name="add_bookmark">Add bookmark</string>
+    <string name="remove_bookmark">Remove bookmark</string>
+    <string name="share">Share</string>
+    <string name="reload">Reload</string>
+    <string name="forward">Forward</string>
+    <string name="desktop_site">Desktop site</string>
+    <string name="find_in_page">Find in page</string>
+    <string name="clear_data">Clear browsing data</string>
+    <string name="channel_downloads">Downloads</string>
+    <string name="channel_done">Finished downloads</string>
+    <string name="search_downloads">Search downloads</string>
+    <string name="add_url">Add URL</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="retry">Retry</string>
+    <string name="open">Open</string>
+    <string name="remove">Remove</string>
+    <string name="cancel">Cancel</string>
+    <string name="clear_completed">Clear completed</string>
+    <string name="pause_all">Pause all</string>
+    <string name="start_all">Start all</string>
+    <string name="empty_downloads">No downloads here yet.\nLong-press a link or tap a download on any page.</string>
+    <string name="incognito_banner">Incognito: no history, cookies and site data are wiped when you close the last incognito tab.</string>
+</resources>
