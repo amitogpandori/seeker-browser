@@ -1,10 +1,10 @@
 const http = require('http'), fs = require('fs'), path = require('path'), os = require('os'), crypto = require('crypto');
-const { DownloadManager, expandBatch, filenameFrom } = require('../src/main/downloads');
+const { DownloadManager, expandBatch, filenameFrom, backoff } = require('../src/main/downloads');
 const assert = require('assert');
 
 const DATA = crypto.randomBytes(5 * 1024 * 1024 + 123);
 const SHA = crypto.createHash('sha256').update(DATA).digest('hex');
-let rangeReqs = 0, maxParallel = 0, open = 0, expired = false;
+let rangeReqs = 0, maxParallel = 0, open = 0, expired = false, mixedSeq = 0;
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/expired') { res.writeHead(403); return res.end(); }
@@ -12,6 +12,17 @@ const server = http.createServer((req, res) => {
     if (u.pathname === '/hls/master.m3u8') { res.writeHead(200, {'content-type':'application/vnd.apple.mpegurl'}); return res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhigh.m3u8\n'); }
     if (u.pathname === '/hls/high.m3u8') { res.writeHead(200); return res.end('#EXTM3U\n' + Array.from({length:12},(_,i)=>`#EXTINF:2,\nseg${i}.ts`).join('\n') + '\n#EXT-X-ENDLIST\n'); }
     const m = u.pathname.match(/seg(\d+)\.ts/); if (m) { res.writeHead(200); return setTimeout(()=>res.end(Buffer.from('SEG' + m[1].padStart(2,'0') + '|')), Math.random()*30); }
+  }
+  if (u.pathname === '/badrange.bin') { // claims 206 but always sends from byte 0
+    res.writeHead(206, { 'content-length': DATA.length, 'content-range': `bytes 0-${DATA.length - 1}/${DATA.length}` });
+    return res.end(DATA);
+  }
+  if (u.pathname === '/mixed.bin') { // every 3rd connection is 6x slower
+    const m = (req.headers.range || 'bytes=0-').match(/bytes=(\d+)-(\d*)/); const st = +m[1], en = m[2] ? +m[2] : DATA.length - 1;
+    const slow = (++mixedSeq % 3) === 0;
+    res.writeHead(206, { 'content-length': en - st + 1, 'content-range': `bytes ${st}-${en}/${DATA.length}` });
+    let p = st; const pump = () => { if (res.destroyed) return; if (p > en) return res.end(); const n = Math.min(32 * 1024, en - p + 1); res.write(DATA.subarray(p, p + n)); p += n; setTimeout(pump, slow ? 60 : 10); };
+    return pump();
   }
   if (u.pathname === '/file.bin' || u.pathname === '/noresume.bin') {
     if (expired) { res.writeHead(403); return res.end(); }
@@ -128,6 +139,48 @@ const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest
   assert.equal(filenameFrom({'content-disposition':"attachment; filename*=UTF-8''%E0%A8%B8%E0%A8%A4.pdf"}, 'http://x/y'), 'ਸਤ.pdf');
   assert.equal(filenameFrom({}, 'https://x.com/a/b/setup%20v2.exe?x=1'), 'setup v2.exe');
   console.log('✓ batch patterns + filename parsing OK');
+  // 9. back-off grows exponentially with jitter and is capped
+  for (let i = 0; i < 20; i++) { const b1 = backoff(1), b3 = backoff(3), b9 = backoff(9); assert.ok(b1 >= 375 && b1 <= 625, 'b1 ' + b1); assert.ok(b3 >= 1500 && b3 <= 2500, 'b3 ' + b3); assert.ok(b9 <= 18750 && b9 >= 11250, 'b9 ' + b9); }
+  console.log('✓ exponential back-off with jitter (0.5 s → 1 s → 2 s … ≤ 15 s)');
+
+  // 10. split goes to the segment that finishes last, sized by speed
+  const fake = { segments: [
+    { start: 0, end: 9999999, pos: 1000000, running: true, speed: 4e6 },     // 9 MB left @ 4 MB/s → 2.25 s
+    { start: 10000000, end: 19999999, pos: 12000000, running: true, speed: 1e6 }, // 8 MB left @ 1 MB/s → 8 s (slowest)
+    { start: 20000000, end: 29999999, pos: 21000000, running: true, speed: 4e6 },
+  ] };
+  const ns = dm._splitSlowest(fake);
+  assert.equal(fake.segments[1].end + 1, ns.start, 'split taken from the slowest-to-finish segment');
+  const newLen = ns.end - ns.start + 1, oldLen = fake.segments[1].end - fake.segments[1].pos + 1;
+  assert.ok(newLen > 0.75 * (newLen + oldLen), `faster new connection gets the larger share (${newLen} vs ${oldLen})`);
+  console.log('✓ dynamic split picks the slowest-to-finish segment and sizes the split by speed');
+
+  // 11. a server answering a range request with the wrong offset is detected, never written
+  settings.retries = 0;
+  it = await dm.add({ url: base + '/badrange.bin', filename: 'bad.bin' });
+  await waitFor(() => ['error', 'completed'].includes(dm.get(it.id).status));
+  assert.equal(dm.get(it.id).status, 'error'); assert.match(dm.get(it.id).error, /wrong range/);
+  settings.retries = 2;
+  console.log('✓ wrong Content-Range offset rejected:', dm.get(it.id).error);
+
+  // 12. uneven connections (1 in 3 much slower) still complete correctly
+  const t1 = Date.now();
+  it = await dm.add({ url: base + '/mixed.bin', filename: 'mixed.bin' });
+  await waitFor(() => dm.get(it.id).status === 'completed', 60000);
+  assert.equal(sha(dm.get(it.id).savePath), SHA);
+  console.log('✓ uneven connections: completed and verified in', ((Date.now() - t1) / 1000).toFixed(1), 's');
+
+  // 13. persisted segment state never claims bytes that are not on disk yet
+  it = await dm.add({ url: base + '/file.bin', filename: 'durable.bin' });
+  await waitFor(() => dm.get(it.id).received > 2e6);
+  const live = dm.get(it.id);
+  for (const sg of live.segments) sg.durable = sg.start; // pretend nothing is flushed yet
+  dm.flush();
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')).find((x) => x.id === it.id);
+  assert.ok(saved.segments.every((sg) => sg.pos === sg.start) && saved.received === 0, 'only durable bytes are persisted');
+  dm.pause(it.id);
+  console.log('✓ saved resume state only counts bytes already written to disk');
+
   dm.shutdown(); server.close();
   console.log('\nALL DOWNLOAD TESTS PASSED');
   process.exit(0);

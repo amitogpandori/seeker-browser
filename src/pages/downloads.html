@@ -3,72 +3,109 @@
 <style>
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; user-select: none; }
-.tb { display: flex; gap: 4px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.tb button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 66px; padding: 6px 8px; border: 0; border-radius: 8px; background: none; font-size: 12px; }
-.tb button span { font-size: 20px; line-height: 1; }
-.tb button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
-.tb button:disabled { opacity: .35; }
-.tb .sep { width: 1px; background: var(--line); margin: 4px 6px; }
+/* ---- top bar ---- */
+.top { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.top h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.top h1 .logo { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--panel); display: grid; place-items: center; font-size: 15px; }
+.top .grow { flex: 1; min-width: 0; }
+.tbtn { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.tbtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.tbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .tbtn.primary { color: #111; } }
+.tbtn:disabled { opacity: .4; cursor: default; }
+@media (max-width: 1360px) { .tbtn .lbl { display: none; } .tbtn { padding: 0 10px; } }
+@media (max-width: 860px) { #tot-sub { display: none; } #sort { width: 110px; } }
+.qsearch { height: 32px; flex: 1; min-width: 140px; max-width: 360px; border-radius: 16px; border: 1px solid var(--line); background: var(--bg); padding: 0 14px; outline: none; }
+.qsearch:focus { border-color: var(--accent); background: var(--panel); }
+select.sort { height: 32px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); padding: 0 10px; }
+.speedo { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; min-width: 96px; }
+.speedo b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.speedo span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* ---- layout ---- */
 .body { flex: 1; display: flex; min-height: 0; }
-nav { width: 190px; flex: none; border-right: 1px solid var(--line); padding: 10px 6px; overflow-y: auto; background: var(--panel); }
-nav button { display: flex; width: 100%; justify-content: space-between; border: 0; background: none; padding: 7px 12px; border-radius: 8px; text-align: left; }
+nav { width: 200px; flex: none; border-right: 1px solid var(--line); padding: 10px 8px; overflow-y: auto; background: var(--panel); }
+nav button { display: flex; width: 100%; justify-content: space-between; border: 0; background: none; padding: 7px 12px; border-radius: 18px; text-align: left; }
 nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 nav button:hover:not(.on) { background: var(--bg); }
-nav .n { color: var(--muted); font-size: 12px; }
+nav .n { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 nav h4 { margin: 14px 12px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.tablewrap { flex: 1; overflow: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { position: sticky; top: 0; background: var(--bg); text-align: left; font-weight: 600; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 12px; }
-td { padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-tr.sel td { background: var(--accent-soft); }
-tr:hover:not(.sel) td { background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
-td.name { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
-td.name .ic { margin-right: 6px; }
-.pb { width: 140px; height: 14px; background: var(--line); border-radius: 7px; overflow: hidden; position: relative; display: inline-block; vertical-align: middle; }
-.pb i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
-.pb b { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 14px; font-weight: 600; mix-blend-mode: difference; color: #fff; }
-.st-error { color: var(--danger); } .st-completed { color: var(--ok); }
-.detail { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; max-height: 42%; overflow: auto; user-select: text; }
+.selbar { display: flex; gap: 8px; align-items: center; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--accent-soft); font-size: 13px; }
+.selbar[hidden] { display: none; }
+.list { flex: 1; overflow: auto; padding: 8px 12px 16px; }
+/* ---- download rows ---- */
+.dl { display: grid; grid-template-columns: 36px 1fr auto; gap: 4px 12px; align-items: center; padding: 10px 12px; border-radius: 12px; border: 1px solid transparent; margin-bottom: 4px; background: var(--panel); }
+.dl:hover { border-color: var(--line); }
+.dl.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel)); }
+.dl .ic { grid-row: span 2; width: 36px; height: 36px; border-radius: 10px; background: var(--bg); display: grid; place-items: center; font-size: 18px; }
+.dl .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dl .meta { grid-column: 2; font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.dl .meta .err { color: var(--danger); }
+.dl .meta .ok { color: var(--ok); }
+.dl .acts { grid-row: span 2; display: flex; gap: 2px; opacity: .55; }
+.dl:hover .acts, .dl.sel .acts { opacity: 1; }
+.dl .acts button { width: 32px; height: 32px; border-radius: 50%; border: 0; background: none; color: var(--muted); display: grid; place-items: center; }
+.dl .acts button:hover { background: var(--accent-soft); color: var(--accent); }
+.dl .bar { grid-column: 2; position: relative; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.dl .bar i { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
+.dl .bar i.seg { border-radius: 0; transition: none; }
+.dl.paused .bar i, .dl.queued .bar i, .dl.scheduled .bar i { background: var(--muted); }
+.dl.error .bar i { background: var(--danger); }
+.dl.downloading .bar::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent); animation: sheen 1.6s linear infinite; }
+@keyframes sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.dl.completed .bar { display: none; }
+.empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+.empty .big { font-size: 40px; display: block; margin-bottom: 8px; }
+/* ---- detail ---- */
+.detail { border-top: 1px solid var(--line); background: var(--panel); padding: 14px 18px; max-height: 46%; overflow: auto; user-select: text; }
 .detail h3 { margin: 0 0 8px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kv { display: grid; grid-template-columns: 120px 1fr; gap: 3px 12px; font-size: 12.5px; }
 .kv span:nth-child(odd) { color: var(--muted); }
 .kv span { overflow-wrap: anywhere; }
-canvas.segs { width: 100%; height: 22px; border-radius: 4px; margin: 10px 0 4px; display: block; background: var(--line); }
+canvas.segs { width: 100%; height: 22px; border-radius: 6px; margin: 6px 0 4px; display: block; background: var(--line); }
+.conns { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.conns span { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--bg); color: var(--muted); font-variant-numeric: tabular-nums; }
 .dacts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.st-error { color: var(--danger); } .st-completed { color: var(--ok); }
 .status { padding: 6px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); display: flex; gap: 18px; background: var(--panel); }
-.drop { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 20%, transparent); border: 3px dashed var(--accent); display: grid; place-items: center; font-size: 22px; font-weight: 600; z-index: 50; }
+.drop { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 18%, transparent); border: 3px dashed var(--accent); display: grid; place-items: center; font-size: 22px; font-weight: 600; z-index: 50; pointer-events: none; }
 .days { display: flex; gap: 6px; flex-wrap: wrap; }
 .days label { display: flex; flex-direction: row; gap: 4px; align-items: center; color: var(--text); margin: 0; }
+kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; }
 </style></head>
 <body>
-<div class="tb">
-  <button id="b-add" title="Add a link (Ctrl+N)"><span>＋</span>Add URL</button>
-  <button id="b-batch" title="Download many numbered files"><span>⋯</span>Batch</button>
-  <div class="sep"></div>
-  <button id="b-resume" disabled><span>▶</span>Resume</button>
-  <button id="b-pause" disabled><span>⏸</span>Stop</button>
-  <button id="b-pauseall"><span>⏹</span>Stop all</button>
-  <button id="b-resumeall"><span>⏵</span>Start all</button>
-  <div class="sep"></div>
-  <button id="b-delete" disabled title="Delete (Del)"><span>🗑</span>Delete</button>
-  <button id="b-clear"><span>✓</span>Clear done</button>
-  <div class="sep"></div>
-  <button id="b-sched"><span>⏰</span>Scheduler</button>
-  <button id="b-opts"><span>⚙</span>Options</button>
+<div class="top">
+  <h1><span class="logo">⬇</span>Downloads</h1>
+  <button class="tbtn primary" id="b-add" title="Add a link (Ctrl+N or paste with Ctrl+V)">＋ Add URL</button>
+  <button class="tbtn" id="b-batch" title="Download many numbered files">⋯<span class="lbl"> Batch</span></button>
+  <input class="qsearch" id="q" type="search" placeholder="Search downloads  (Ctrl+F)" autocomplete="off">
+  <select class="sort" id="sort" title="Sort">
+    <option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">Name</option>
+    <option value="size">Size</option><option value="progress">Progress</option><option value="speed">Speed</option>
+  </select>
+  <span class="grow"></span>
+  <button class="tbtn" id="b-pauseall" title="Pause every running or queued download">❚❚<span class="lbl"> Pause all</span></button>
+  <button class="tbtn" id="b-resumeall" title="Start every paused or failed download">▶<span class="lbl"> Start all</span></button>
+  <button class="tbtn" id="b-clear" title="Remove finished downloads from the list (files stay on disk)">✓<span class="lbl"> Clear completed</span></button>
+  <button class="tbtn" id="b-sched" title="Scheduler">◷<span class="lbl"> Scheduler</span></button>
+  <button class="tbtn" id="b-opts" title="Options">⚙<span class="lbl"> Options</span></button>
+  <div class="speedo" title="Combined speed of all downloads"><b id="tot-speed">0 B/s</b><span id="tot-sub">idle</span></div>
 </div>
 <div class="body">
   <nav id="nav"></nav>
   <div class="main">
-    <div class="tablewrap"><table>
-      <thead><tr><th>File name</th><th>Size</th><th>Status</th><th>Speed</th><th>Time left</th><th>Added</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table><div id="empty" class="empty" hidden>No downloads here. Click <b>Add URL</b>, paste a link, or drag a link onto this page.</div></div>
+    <div class="selbar" id="selbar" hidden>
+      <span id="sel-n"></span><span class="grow" style="flex:1"></span>
+      <button class="btn sm" id="b-resume">▶ Resume</button>
+      <button class="btn sm" id="b-pause">❚❚ Pause</button>
+      <button class="btn sm danger" id="b-delete">🗑 Delete</button>
+      <button class="btn sm" id="b-unsel">Clear selection</button>
+    </div>
+    <div class="list" id="rows"></div>
     <div class="detail" id="detail" hidden></div>
   </div>
 </div>
 <div class="status" id="statusbar"></div>
-
 <dialog id="d-add"><form method="dialog">
   <h3>Add download</h3>
   <label>Link (http/https, .m3u8 streams supported) <input class="field" id="a-url" required placeholder="https://…"></label>
@@ -123,16 +160,28 @@ canvas.segs { width: 100%; height: 22px; border-radius: 4px; margin: 10px 0 4px;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const CAT_ICON = { Video: '🎬', Music: '🎵', Programs: '💿', Compressed: '🗜️', Documents: '📄', Images: '🖼️', General: '📦' };
-let items = [], selected = new Set(), filter = 'all', S = null;
+const SVG = (d) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  pause: SVG('<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'),
+  resume: SVG('<path d="M7 5v14l11-7z"/>'),
+  retry: SVG('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
+  open: SVG('<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
+  folder: SVG('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+  remove: SVG('<path d="M6 6l12 12M18 6L6 18"/>'),
+};
+let items = [], selected = new Set(), filter = 'all', S = null, query = '', sortBy = localStorage.getItem('dm.sort') || 'new';
+$('#sort').value = sortBy;
 
 function fmtSize(n) { if (!n) return '—'; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n.toFixed(i ? (n < 10 ? 2 : 1) : 0)} ${u[i]}`; }
+function fmtSpeed(n) { return n ? fmtSize(n) + '/s' : '0 B/s'; }
 function fmtEta(s) { if (!s && s !== 0) return ''; if (s < 60) return `${s}s`; if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`; return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; }
-function pct(d) { if (d.status === 'completed') return 100; if (d.kind === 'hls') return d.hlsTotal ? Math.floor(d.hlsDone / d.hlsTotal * 100) : 0; return d.size ? Math.floor(d.received / d.size * 100) : 0; }
-const STATUS = { downloading: 'Downloading', connecting: 'Connecting…', queued: 'Queued', paused: 'Stopped', scheduled: 'Scheduled', completed: 'Complete', error: 'Error' };
+function pct(d) { if (d.status === 'completed') return 100; if (d.kind === 'hls') return d.hlsTotal ? Math.floor(d.hlsDone / d.hlsTotal * 100) : 0; return d.size ? Math.min(100, Math.floor(d.received / d.size * 100)) : 0; }
+const STATUS = { downloading: 'Downloading', connecting: 'Connecting…', queued: 'Queued', paused: 'Paused', scheduled: 'Scheduled', completed: 'Complete', error: 'Failed' };
+const ACTIVE = (d) => ['downloading', 'connecting'].includes(d.status);
 
 const FILTERS = [
   ['all', 'All downloads', () => true],
-  ['active', 'Downloading', (d) => ['downloading', 'connecting'].includes(d.status)],
+  ['active', 'Downloading', ACTIVE],
   ['unfinished', 'Unfinished', (d) => d.status !== 'completed'],
   ['finished', 'Finished', (d) => d.status === 'completed'],
   ['queue', 'Queue & schedule', (d) => ['queued', 'scheduled'].includes(d.status)],
@@ -140,47 +189,100 @@ const FILTERS = [
   null,
   ...['Video', 'Music', 'Programs', 'Compressed', 'Documents', 'Images', 'General'].map((c) => ['cat:' + c, `${CAT_ICON[c]} ${c}`, (d) => d.category === c]),
 ];
+const SORTS = {
+  new: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+  old: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+  name: (a, b) => String(a.filename).localeCompare(String(b.filename), undefined, { numeric: true }),
+  size: (a, b) => (b.size || b.received || 0) - (a.size || a.received || 0),
+  progress: (a, b) => pct(b) - pct(a),
+  speed: (a, b) => (ACTIVE(b) ? b.speed || 0 : -1) - (ACTIVE(a) ? a.speed || 0 : -1),
+};
+function visible() {
+  const f = (FILTERS.find((x) => x && x[0] === filter) || FILTERS[0])[2];
+  const q = query.toLowerCase();
+  return items.filter((d) => f(d) && (!q || String(d.filename).toLowerCase().includes(q) || String(d.url).toLowerCase().includes(q))).sort(SORTS[sortBy] || SORTS.new);
+}
 function drawNav() {
   $('#nav').innerHTML = FILTERS.map((f) => f ? `<button class="${f[0] === filter ? 'on' : ''}" data-f="${f[0]}"><span>${f[1]}</span><span class="n">${items.filter(f[2]).length || ''}</span></button>` : '<h4>Categories</h4>').join('');
 }
 $('#nav').onclick = (e) => { const b = e.target.closest('[data-f]'); if (b) { filter = b.dataset.f; draw(); } };
+$('#q').oninput = () => { query = $('#q').value.trim(); draw(); };
+$('#sort').onchange = () => { sortBy = $('#sort').value; localStorage.setItem('dm.sort', sortBy); draw(); };
 
+// Progress bar: for multi-connection downloads every segment is drawn at its place in the file (IDM-style).
+function barHtml(d) {
+  if (d.status === 'completed') return '<div class="bar"></div>';
+  if (d.kind !== 'hls' && d.size && d.segments?.length > 1) {
+    return `<div class="bar" title="${d.segments.length} parts">${d.segments.map((s) => {
+      const l = s.start / d.size * 100, w = Math.max(0, Math.min(s.pos, s.end + 1) - s.start) / d.size * 100;
+      return `<i class="seg" style="left:${l.toFixed(3)}%;width:${w.toFixed(3)}%"></i>`;
+    }).join('')}</div>`;
+  }
+  return `<div class="bar"><i style="left:0;width:${pct(d)}%"></i></div>`;
+}
+function metaHtml(d) {
+  const p = pct(d), parts = [];
+  const sizeTxt = d.size ? `${fmtSize(d.received)} of ${fmtSize(d.size)}` : fmtSize(d.received);
+  if (d.status === 'completed') parts.push(`<span class="ok">✓ ${fmtSize(d.size || d.received)}</span>`, `<span>${new Date(d.completedAt || d.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>`);
+  else if (d.status === 'error') parts.push(`<span class="err" title="${esc(d.error)}">⚠ ${esc(String(d.error || 'Failed').slice(0, 90))}</span>`, `<span>${sizeTxt}</span>`);
+  else {
+    parts.push(`<span>${p}%</span>`, `<span>${sizeTxt}</span>`);
+    if (d.status === 'downloading') parts.push(`<span>↓ ${fmtSpeed(d.speed)}</span>`, `<span>${d.eta != null ? fmtEta(d.eta) + ' left' : 'calculating…'}</span>`);
+    else parts.push(`<span>${STATUS[d.status] || d.status}</span>`);
+    if (d.kind === 'hls' && d.hlsTotal) parts.push(`<span>${d.hlsDone}/${d.hlsTotal} parts</span>`);
+    else if (d.status === 'downloading' && d.segments?.length > 1) parts.push(`<span>${d.segments.filter((s) => s.speed > 0).length} connections</span>`);
+  }
+  return parts.join('');
+}
+function actsHtml(d) {
+  const b = (a, t) => `<button data-a="${a}" title="${t}" aria-label="${t}">${ICON[a]}</button>`;
+  const out = [];
+  if (ACTIVE(d) || d.status === 'queued') out.push(b('pause', 'Pause'));
+  else if (d.status === 'error') out.push(b('retry', 'Retry'));
+  else if (d.status !== 'completed') out.push(b('resume', 'Resume'));
+  if (d.status === 'completed') out.push(b('open', 'Open'));
+  out.push(b('folder', 'Show in folder'), b('remove', 'Remove from list'));
+  return out.join('');
+}
 function rowHtml(d) {
-  const p = pct(d);
-  const status = d.status === 'error' ? `<span class="st-error" title="${esc(d.error)}">Error</span>`
-    : d.status === 'completed' ? '<span class="st-completed">Complete</span>'
-    : `<span class="pb"><i style="width:${p}%"></i><b>${p}% ${STATUS[d.status] === 'Downloading' ? '' : '· ' + STATUS[d.status]}</b></span>`;
-  return `<tr data-id="${d.id}" class="${selected.has(d.id) ? 'sel' : ''}">
-    <td class="name" title="${esc(d.filename)}"><span class="ic">${CAT_ICON[d.category] || '📦'}</span>${esc(d.filename)}</td>
-    <td>${d.size ? fmtSize(d.size) : (d.received ? fmtSize(d.received) : '—')}</td>
-    <td>${status}</td>
-    <td>${d.status === 'downloading' ? fmtSize(d.speed) + '/s' : ''}</td>
-    <td>${d.status === 'downloading' ? fmtEta(d.eta) : ''}</td>
-    <td>${new Date(d.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${new Date(d.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td></tr>`;
+  return `<div class="dl ${d.status} ${selected.has(d.id) ? 'sel' : ''}" data-id="${d.id}">
+    <div class="ic">${CAT_ICON[d.category] || '📦'}</div>
+    <div class="nm" title="${esc(d.filename)}">${esc(d.filename)}</div>
+    <div class="acts">${actsHtml(d)}</div>
+    <div class="meta">${metaHtml(d)}</div>
+    ${barHtml(d)}
+  </div>`;
 }
 function draw() {
   drawNav();
-  const f = FILTERS.find((x) => x && x[0] === filter)[2];
-  const list = items.filter(f);
-  $('#rows').innerHTML = list.map(rowHtml).join('');
-  $('#empty').hidden = list.length > 0;
+  const list = visible();
+  $('#rows').innerHTML = list.length ? list.map(rowHtml).join('')
+    : `<div class="empty"><span class="big">⬇</span>${items.length ? 'Nothing matches this view.' : 'No downloads yet. Click <b>Add URL</b>, press <kbd>Ctrl</kbd>+<kbd>V</kbd> with a link copied, or drag a link here.'}</div>`;
   for (const id of [...selected]) if (!items.some((d) => d.id === id)) selected.delete(id);
   updateButtons(); drawDetail(); drawStatus();
 }
+// Progress ticks only patch the parts of a row that change, so the list stays smooth with many downloads.
 function updateRow(d) {
-  const tr = document.querySelector(`tr[data-id="${d.id}"]`);
-  if (tr) tr.outerHTML = rowHtml(d);
+  const el = document.querySelector(`.dl[data-id="${d.id}"]`);
+  if (!el) return;
+  if (!el.classList.contains(d.status)) { el.outerHTML = rowHtml(d); return; }
+  el.querySelector('.meta').innerHTML = metaHtml(d);
+  const bar = el.querySelector('.bar'); if (bar) bar.outerHTML = barHtml(d);
 }
 function updateButtons() {
   const sel = items.filter((d) => selected.has(d.id));
+  $('#selbar').hidden = sel.length < 1;
+  $('#sel-n').textContent = `${sel.length} selected`;
   $('#b-resume').disabled = !sel.some((d) => ['paused', 'error', 'scheduled', 'queued'].includes(d.status));
   $('#b-pause').disabled = !sel.some((d) => ['downloading', 'connecting', 'queued'].includes(d.status));
-  $('#b-delete').disabled = !sel.length;
 }
 function drawStatus() {
   const act = items.filter((d) => d.status === 'downloading');
   const speed = act.reduce((a, d) => a + (d.speed || 0), 0);
-  $('#statusbar').innerHTML = `<span>${act.length} downloading</span><span>${items.filter((d) => d.status === 'queued').length} queued</span><span>Total speed: ${fmtSize(speed)}/s</span>${S?.speedLimitKB ? `<span>Speed limit: ${S.speedLimitKB} KB/s</span>` : ''}${S?.scheduler?.enabled ? `<span>Scheduler: ${S.scheduler.start}–${S.scheduler.stop}</span>` : ''}`;
+  const left = act.reduce((a, d) => a + Math.max(0, (d.size || 0) - (d.received || 0)), 0);
+  $('#tot-speed').textContent = fmtSpeed(speed);
+  $('#tot-sub').textContent = act.length ? `${act.length} active${speed && left ? ' · ' + fmtEta(Math.round(left / speed)) + ' left' : ''}` : 'idle';
+  $('#statusbar').innerHTML = `<span>${act.length} downloading</span><span>${items.filter((d) => d.status === 'queued').length} queued</span><span>${items.filter((d) => d.status === 'completed').length} completed</span><span>Total speed: ${fmtSpeed(speed)}</span>${S?.speedLimitKB ? `<span>Speed limit: ${S.speedLimitKB} KB/s</span>` : ''}${S?.scheduler?.enabled ? `<span>Scheduler: ${S.scheduler.start}–${S.scheduler.stop}</span>` : ''}`;
 }
 function drawDetail() {
   const d = items.find((x) => selected.size === 1 && selected.has(x.id));
@@ -192,7 +294,8 @@ function drawDetail() {
   if (box.dataset.id !== d.id || box.dataset.status !== d.status) {
     box.dataset.id = d.id; box.dataset.status = d.status;
     box.innerHTML = `<h3>${esc(d.filename)}</h3>
-      <canvas class="segs" id="segs" title="Each block is a connection's part of the file (IDM-style)"></canvas>
+      <canvas class="segs" id="segs" title="Each block is one connection's part of the file"></canvas>
+      <div class="conns" id="conns"></div>
       <div class="kv" id="kv"></div>
       <div class="dacts">
         ${done ? '<button class="btn primary sm" data-a="open">Open</button>' : ''}
@@ -208,11 +311,14 @@ function drawDetail() {
     if (c) c.onchange = () => seeker.call('downloads.options', d.id, { connections: +c.value });
     if (l) l.onchange = () => seeker.call('downloads.options', d.id, { speedLimitKB: +l.value });
   }
+  const liveConns = (d.segments || []).filter((s) => s.speed > 0);
+  box.querySelector('#conns').innerHTML = d.status === 'downloading' && liveConns.length > 1
+    ? liveConns.map((s, i) => `<span title="bytes ${s.start}–${s.end}">#${i + 1} ${fmtSpeed(s.speed)}</span>`).join('') : '';
   box.querySelector('#kv').innerHTML = [
     ['Status', d.status === 'error' ? `<span class="st-error">${esc(d.error)}</span>` : `${STATUS[d.status]} · ${p}%`],
     ['Downloaded', `${fmtSize(d.received)}${d.size ? ' of ' + fmtSize(d.size) : ''}${d.kind === 'hls' && d.hlsTotal ? ` · ${d.hlsDone}/${d.hlsTotal} stream parts` : ''}`],
-    d.status === 'downloading' ? ['Speed', `${fmtSize(d.speed)}/s · ${fmtEta(d.eta) || 'calculating'} left`] : null,
-    ['Connections', d.kind === 'hls' ? `${Math.min(d.connections, 6)} (stream)` : d.resumable ? `${d.segments.filter((s) => s.pos <= s.end).length || 0} active of ${d.connections} · ${d.segments.length} parts` : '1 (server does not support resume)'],
+    d.status === 'downloading' ? ['Speed', `${fmtSpeed(d.speed)} · ${fmtEta(d.eta) || 'calculating'} left`] : null,
+    ['Connections', d.kind === 'hls' ? `${Math.min(d.connections, 6)} (stream)` : d.resumable ? `${liveConns.length} active of ${d.connections} · ${(d.segments || []).length} parts` : '1 (server does not support resume)'],
     ['Resume support', d.resumable ? 'Yes' : 'No'],
     ['Saved to', esc(d.savePath)],
     ['Link', `<span style="font-size:11.5px">${esc(d.url)}</span>`],
@@ -229,11 +335,12 @@ function drawSegments(d) {
   g.fillStyle = css.getPropertyValue('--line'); g.fillRect(0, 0, w, h);
   g.fillStyle = css.getPropertyValue('--accent');
   if (d.status === 'completed') { g.fillRect(0, 0, w, h); return; }
-  if (d.kind === 'hls' || !d.size || !d.segments.length) { g.fillRect(0, 0, w * pct(d) / 100, h); return; }
+  if (d.kind === 'hls' || !d.size || !d.segments?.length) { g.fillRect(0, 0, w * pct(d) / 100, h); return; }
   for (const s of d.segments) {
     const x = (s.start / d.size) * w, x2 = (Math.min(s.pos, s.end + 1) / d.size) * w;
-    g.fillRect(x, 0, Math.max(0, x2 - x), h);
-    g.fillStyle = css.getPropertyValue('--panel'); g.fillRect(x, 0, 1, h); g.fillStyle = css.getPropertyValue('--accent');
+    g.fillStyle = css.getPropertyValue('--accent'); g.fillRect(x, 0, Math.max(0, x2 - x), h);
+    if (s.speed > 0) { g.fillStyle = css.getPropertyValue('--ok'); g.fillRect(Math.max(x, x2 - 2), 0, 2, h); } // live connection edge
+    g.fillStyle = css.getPropertyValue('--panel'); g.fillRect(x, 0, 1, h);
   }
 }
 $('#detail').onclick = async (e) => {
@@ -251,26 +358,36 @@ $('#d-link').onclose = async () => {
   try { await seeker.call('downloads.refreshLink', id, $('#l-url').value.trim()); seeker.call('downloads.action', 'resume', id); } catch (e) { toast(e.message); }
 };
 
+// Row actions (inline buttons) and selection
+$('#rows').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.acts button'); if (!btn) return;
+  e.stopPropagation();
+  const id = btn.closest('.dl').dataset.id, a = btn.dataset.a;
+  if (a === 'remove') { const withFile = items.find((x) => x.id === id)?.status !== 'completed' ? false : window.confirm('Also delete the file from disk?\n\nOK = delete the file  ·  Cancel = keep it'); seeker.call('downloads.action', 'remove', id, withFile); return; }
+  seeker.call('downloads.action', a, id);
+});
 $('#rows').addEventListener('mousedown', (e) => {
-  const tr = e.target.closest('tr'); if (!tr) return;
-  const id = tr.dataset.id;
-  if (e.ctrlKey) { selected.has(id) ? selected.delete(id) : selected.add(id); }
+  if (e.target.closest('.acts')) return;
+  const row = e.target.closest('.dl'); if (!row) return;
+  const id = row.dataset.id;
+  if (e.ctrlKey || e.metaKey) { selected.has(id) ? selected.delete(id) : selected.add(id); }
   else if (e.shiftKey && selected.size) {
-    const ids = [...document.querySelectorAll('#rows tr')].map((r) => r.dataset.id);
+    const ids = [...document.querySelectorAll('#rows .dl')].map((r) => r.dataset.id);
     const a = ids.indexOf([...selected].pop()), b = ids.indexOf(id);
     ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => selected.add(x));
   } else if (!(e.button === 2 && selected.has(id))) { selected = new Set([id]); }
-  document.querySelectorAll('#rows tr').forEach((r) => r.classList.toggle('sel', selected.has(r.dataset.id)));
+  document.querySelectorAll('#rows .dl').forEach((r) => r.classList.toggle('sel', selected.has(r.dataset.id)));
   updateButtons(); drawDetail();
 });
 $('#rows').addEventListener('dblclick', (e) => {
-  const tr = e.target.closest('tr'); if (!tr) return;
-  const d = items.find((x) => x.id === tr.dataset.id);
-  seeker.call('downloads.action', d.status === 'completed' ? 'open' : (['downloading', 'connecting'].includes(d.status) ? 'pause' : 'resume'), d.id);
+  const row = e.target.closest('.dl'); if (!row || e.target.closest('.acts')) return;
+  const d = items.find((x) => x.id === row.dataset.id);
+  seeker.call('downloads.action', d.status === 'completed' ? 'open' : (ACTIVE(d) ? 'pause' : 'resume'), d.id);
 });
 const forSel = (fn) => [...selected].forEach(fn);
 $('#b-resume').onclick = () => forSel((id) => seeker.call('downloads.action', 'resume', id));
 $('#b-pause').onclick = () => forSel((id) => seeker.call('downloads.action', 'pause', id));
+$('#b-unsel').onclick = () => { selected.clear(); draw(); };
 $('#b-pauseall').onclick = () => seeker.call('downloads.pauseAll');
 $('#b-resumeall').onclick = () => seeker.call('downloads.resumeAll');
 $('#b-clear').onclick = () => seeker.call('downloads.clearCompleted');
@@ -283,9 +400,13 @@ async function deleteSel() {
 }
 document.addEventListener('keydown', (e) => {
   if (document.querySelector('dialog[open]')) return;
-  if (e.key === 'Delete') deleteSel();
-  if (e.ctrlKey && e.key.toLowerCase() === 'a' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); items.forEach((d) => selected.add(d.id)); draw(); }
-  if (e.ctrlKey && e.key.toLowerCase() === 'v' && document.activeElement.tagName !== 'INPUT') navigator.clipboard.readText().then((t) => { if (/^https?:\/\//.test(t.trim())) openAdd(t.trim()); }).catch(() => {});
+  const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);
+  if (e.key === 'Delete' && !typing) deleteSel();
+  if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#q').focus(); $('#q').select(); }
+  if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openAdd(); }
+  if (e.key === 'Escape' && !typing) { selected.clear(); draw(); }
+  if (e.ctrlKey && e.key.toLowerCase() === 'a' && !typing) { e.preventDefault(); visible().forEach((d) => selected.add(d.id)); draw(); }
+  if (e.ctrlKey && e.key.toLowerCase() === 'v' && !typing) navigator.clipboard.readText().then((t) => { if (/^https?:\/\//.test(t.trim())) openAdd(t.trim()); }).catch(() => {});
 });
 
 // Add / batch

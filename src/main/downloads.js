@@ -1,7 +1,8 @@
 // Seeker Download Manager engine (IDM-style).
 // - Multi-connection segmented downloads using HTTP Range requests
-// - Dynamic segmentation: when a connection finishes, it splits the largest
-//   remaining segment so all connections stay busy until the very end
+// - Dynamic segmentation: when a connection finishes, it takes over part of the segment
+//   that would finish last (by speed), so all connections stay busy until the very end
+// - Slow connections are dropped and reopened; chunks are coalesced into large writes
 // - Pause / resume, also across app restarts (segment state is persisted)
 // - Queue with max simultaneous downloads, global + per-file speed limits
 // - Auto retry with back-off, stall detection, "refresh link" for expired URLs
@@ -86,6 +87,11 @@ function splitRange(size, n) {
   return segs;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Exponential back-off with jitter: ~0.5 s, 1 s, 2 s, 4 s … capped at 15 s.
+const backoff = (attempt) => Math.round(Math.min(15000, 500 * 2 ** (attempt - 1)) * (0.75 + Math.random() * 0.5));
+const FLUSH_BYTES = 512 * 1024;   // coalesce network chunks into writes of this size
+const MAX_INFLIGHT_WRITES = 2;    // pause the socket only when the disk falls this far behind
+const PROGRESS_SAVE_MS = 5000;    // while downloading, persist state at most this often
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 class Limiter {
@@ -351,7 +357,7 @@ class DownloadManager extends EventEmitter {
           if (s.pos <= s.end && !s.running) launch(s);
         }
         while (rt.workers < conns()) {
-          const s = this._splitLargest(item);
+          const s = this._splitSlowest(item);
           if (!s) break;
           launch(s);
         }
@@ -370,21 +376,30 @@ class DownloadManager extends EventEmitter {
     });
   }
 
-  _splitLargest(item) {
+  // Pick the segment that will finish last (remaining bytes / its speed) and give part of it to a
+  // free connection. The split point is chosen so both connections should finish at about the same
+  // time (the new connection is assumed to run at the median speed of the others).
+  _splitSlowest(item) {
     const min = this.getSettings().minSegmentKB * 1024;
-    let best = null;
-    for (const s of item.segments) {
-      const rem = s.end - s.pos + 1;
-      if (s.running && rem >= 2 * min && (!best || rem > best.end - best.pos + 1)) best = s;
-    }
-    if (!best) return null;
+    const running = item.segments.filter((s) => s.running && s.end - s.pos + 1 >= 2 * min);
+    if (!running.length) return null;
+    const speeds = item.segments.filter((s) => s.running && s.speed > 0).map((s) => s.speed).sort((x, y) => x - y);
+    const median = speeds.length ? speeds[Math.floor(speeds.length / 2)] : 0;
+    const finishTime = (s) => (s.end - s.pos + 1) / Math.max(1, s.speed || median || 1);
+    let best = running[0];
+    for (const s of running) if (finishTime(s) > finishTime(best)) best = s;
     const rem = best.end - best.pos + 1;
-    const mid = best.pos + Math.floor(rem / 2);
-    const seg = { start: mid, end: best.end, pos: mid };
+    const vOld = best.speed || 0, vNew = median || vOld;
+    let frac = vOld > 0 && vNew > 0 ? vNew / (vOld + vNew) : 0.5;
+    frac = Math.min(0.9, Math.max(0.1, frac));
+    const newLen = Math.max(min, Math.min(rem - min, Math.floor(rem * frac)));
+    const mid = best.end - newLen + 1;
+    const seg = { start: mid, end: best.end, pos: mid, durable: mid };
     best.end = mid - 1;
     item.segments.splice(item.segments.indexOf(best) + 1, 0, seg);
     return seg;
   }
+  _splitLargest(item) { return this._splitSlowest(item); } // kept for compatibility
 
   async _segment(item, rt, seg, ranged) {
     const retries = this.getSettings().retries;
@@ -394,35 +409,71 @@ class DownloadManager extends EventEmitter {
       while (!rt.stopped && (seg.end < 0 || seg.pos <= seg.end)) {
         try {
           await this._fetchInto(item, rt, seg, ranged);
+          attempt = 0;
           if (seg.end < 0) break; // unknown length, stream ended normally
         } catch (e) {
           if (rt.stopped) break;
+          if (e.restart) continue; // slow connection dropped on purpose: reconnect at once
           if (e.fatal || ++attempt > retries) throw e;
-          await sleep(Math.min(15000, 1000 * attempt));
-          if (!ranged) { item.received -= seg.pos; seg.pos = 0; await rt.fd.truncate(0); }
+          await sleep(backoff(attempt));
+          if (!ranged) { item.received -= seg.pos; seg.pos = 0; seg.durable = 0; await rt.fd.truncate(0); }
         }
       }
-    } finally { seg.running = false; }
+    } finally { seg.running = false; seg.speed = 0; seg.abort = null; }
   }
 
+  // One HTTP request for (the rest of) a segment. Incoming chunks are coalesced into ~512 KB
+  // positional writes (far fewer syscalls than one write per network chunk); the socket is only
+  // paused when writes fall behind or a speed limit applies.
   _fetchInto(item, rt, seg, ranged) {
     return new Promise((resolve, reject) => {
       const headers = { ...item.headers };
       if (item.referrer) headers.Referer = item.referrer;
       if (ranged) headers.Range = `bytes=${seg.pos}-${seg.end}`;
-      let res = null, done = false, stallTimer = null, pending = Promise.resolve();
       const stallMs = this.getSettings().stallSeconds * 1000;
+      let res = null, done = false, paused = false, inflight = 0, waitUntil = 0;
+      let lastData = Date.now(), lastFlush = Date.now();
+      let buf = [], bufLen = 0, bufAt = seg.pos;
+      let writing = Promise.resolve();
+      seg.durable = seg.pos;
+      seg.startedAt = Date.now();
+      const maybeResume = () => {
+        if (!paused || done || rt.stopped || !res) return;
+        if (inflight >= MAX_INFLIGHT_WRITES) return; // a finishing write calls us again
+        const left = waitUntil - Date.now();
+        if (left > 0) { setTimeout(maybeResume, left + 1); return; } // timers may fire a hair early
+        paused = false; res.stream.resume();
+      };
+      const flushBuf = () => {
+        lastFlush = Date.now();
+        if (!bufLen) return;
+        const data = buf.length === 1 ? buf[0] : Buffer.concat(buf, bufLen);
+        const at = bufAt;
+        buf = []; bufAt += bufLen; bufLen = 0;
+        inflight++;
+        writing = writing.then(() => rt.fd.write(data, 0, data.length, at)).then(() => {
+          inflight--;
+          if (at + data.length > seg.durable) seg.durable = at + data.length;
+          maybeResume();
+        }, (err) => { inflight--; const e = new Error('Disk write failed: ' + err.message); e.fatal = true; finish(e); });
+      };
+      const timer = setInterval(() => {
+        if (Date.now() - lastData > stallMs) return finish(new Error('Connection stalled'));
+        if (bufLen && Date.now() - lastFlush > 1000) flushBuf(); // keep resume data fresh on slow links
+      }, Math.min(1000, Math.max(50, stallMs / 4)));
       const finish = (err) => {
         if (done) return;
         done = true;
         rt.finishers.delete(finish);
-        clearTimeout(stallTimer);
+        clearInterval(timer);
+        if (seg.abort === abortSlow) seg.abort = null;
         if (res) { rt.reqs.delete(res); res.abort(); }
-        pending.then(() => (err ? reject(err) : resolve()), reject);
+        try { flushBuf(); } catch { /* */ }
+        writing.then(() => (err ? reject(err) : resolve()), reject);
       };
-      const armStall = () => { clearTimeout(stallTimer); stallTimer = setTimeout(() => finish(new Error('Connection stalled')), stallMs); };
+      const abortSlow = () => finish(Object.assign(new Error('Reconnecting slow connection'), { restart: true }));
+      seg.abort = abortSlow;
       rt.finishers.add(finish);
-      armStall();
       this.request(item.url, { headers, partition: item.partition }).then((r) => {
         res = r;
         if (done || rt.stopped) { r.abort(); return finish(); }
@@ -432,6 +483,11 @@ class DownloadManager extends EventEmitter {
           e.fatal = r.status >= 400 && r.status < 500;
           return finish(e);
         }
+        if (ranged) {
+          const cr = headerVal(r.headers, 'content-range');
+          const m = cr && String(cr).match(/bytes\s+(\d+)-/i);
+          if (m && +m[1] !== seg.pos) return finish(new Error(`Server sent the wrong range (${m[1]} instead of ${seg.pos})`));
+        }
         if (!ranged && (r.status < 200 || r.status >= 300)) { const e = new Error(`Server returned HTTP ${r.status}`); e.fatal = r.status < 500; return finish(e); }
         if (!ranged && seg.end < 0) {
           const len = +headerVal(r.headers, 'content-length');
@@ -440,31 +496,30 @@ class DownloadManager extends EventEmitter {
         const stream = r.stream;
         stream.on('data', (chunk) => {
           if (done || rt.stopped) return;
-          armStall();
-          let buf = chunk;
+          lastData = Date.now();
+          let b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
           if (seg.end >= 0) {
             const room = seg.end - seg.pos + 1;
             if (room <= 0) return finish();
-            if (buf.length > room) buf = buf.subarray(0, room);
+            if (b.length > room) b = b.subarray(0, room);
           }
-          const at = seg.pos;
-          seg.pos += buf.length;
-          item.received += buf.length;
-          rt.bytesWindow += buf.length;
+          buf.push(b); bufLen += b.length;
+          seg.pos += b.length;
+          seg.win = (seg.win || 0) + b.length;
+          item.received += b.length;
+          rt.bytesWindow += b.length;
+          const s = this.getSettings();
           const wait = Math.max(
-            this.limiter.take(buf.length, this.getSettings().speedLimitKB * 1024),
-            item.speedLimitKB ? (rt.itemLimiter ||= new Limiter()).take(buf.length, item.speedLimitKB * 1024) : 0);
-          stream.pause();
-          pending = pending.then(() => rt.fd.write(buf, 0, buf.length, at)).then(() => {
-            if (seg.end >= 0 && seg.pos > seg.end) return finish();
-            setTimeout(() => { if (!done && !rt.stopped) stream.resume(); }, wait);
-          }, (err) => { const e = new Error('Disk write failed: ' + err.message); e.fatal = true; finish(e); });
+            this.limiter.take(b.length, s.speedLimitKB * 1024),
+            item.speedLimitKB ? (rt.itemLimiter ||= new Limiter()).take(b.length, item.speedLimitKB * 1024) : 0);
+          if (bufLen >= FLUSH_BYTES) flushBuf();
+          if (seg.end >= 0 && seg.pos > seg.end) return finish();
+          if (wait > 0) { waitUntil = Date.now() + wait; setTimeout(maybeResume, wait); }
+          if ((wait > 0 || inflight >= MAX_INFLIGHT_WRITES) && !paused) { paused = true; stream.pause(); }
         });
         stream.on('end', () => {
-          pending.then(() => {
-            if (seg.end >= 0 && seg.pos <= seg.end) finish(new Error('Connection closed early'));
-            else finish();
-          });
+          if (seg.end >= 0 && seg.pos <= seg.end) finish(new Error('Connection closed early'));
+          else finish();
         });
         stream.on('error', (e) => finish(rt.stopped ? null : e));
         stream.on('aborted', () => finish(rt.stopped ? null : new Error('Connection aborted')));
@@ -532,7 +587,7 @@ class DownloadManager extends EventEmitter {
           } catch (e) {
             if (rt.stopped) return;
             if (++attempt > this.getSettings().retries) throw e;
-            await sleep(1000 * attempt);
+            await sleep(backoff(attempt));
           }
         }
       }
@@ -543,18 +598,43 @@ class DownloadManager extends EventEmitter {
 
   _tick() {
     const prog = [];
+    const now = Date.now();
     for (const [id, rt] of this.active) {
       const it = this.get(id);
       if (!it) continue;
       it.speed = Math.round(it.speed * 0.6 + rt.bytesWindow * 0.4);
       rt.bytesWindow = 0;
+      for (const sg of it.segments || []) { sg.speed = Math.round((sg.speed || 0) * 0.5 + (sg.win || 0) * 0.5); sg.win = 0; }
+      // only when nothing is throttling us on purpose (a speed limit makes connections uneven by design)
+      if (it.kind === 'http' && !this.getSettings().speedLimitKB && !it.speedLimitKB) this._dropSlowConnections(it, now);
       const remaining = it.kind === 'hls'
         ? (it.hlsTotal ? (it.hlsTotal - it.hlsDone) * (it.received / Math.max(1, it.hlsDone)) : 0)
         : it.size - it.received;
       it.eta = it.speed > 0 && remaining > 0 ? Math.round(remaining / it.speed) : null;
       prog.push(this._public(it));
     }
-    if (prog.length) { this.emit('progress', prog); this._save(); }
+    if (prog.length) {
+      this.emit('progress', prog);
+      if (now - (this.lastProgressSave || 0) >= PROGRESS_SAVE_MS) { this.lastProgressSave = now; this._save(); }
+    }
+  }
+
+  // A connection running far below its siblings (e.g. a bad route or a throttled server node) is
+  // dropped and reopened; it keeps its segment, so no data is lost. At most 3 times per segment.
+  _dropSlowConnections(it, now) {
+    const min = this.getSettings().minSegmentKB * 1024;
+    const live = (it.segments || []).filter((s) => s.running && s.abort && s.end >= 0 && s.pos <= s.end && now - (s.startedAt || now) > 3000);
+    if (live.length < 3) return;
+    const speeds = live.map((s) => s.speed).sort((a, b) => a - b);
+    const median = speeds[Math.floor(speeds.length / 2)];
+    if (!median) return;
+    for (const s of live) {
+      const rem = s.end - s.pos + 1;
+      if (s.speed < median * 0.35 && rem > Math.max(2 * min, median * 4) && (s.restarts || 0) < 3) {
+        s.restarts = (s.restarts || 0) + 1;
+        s.abort();
+      }
+    }
   }
 
   _schedule() {
@@ -579,7 +659,7 @@ class DownloadManager extends EventEmitter {
 
   _public(i) {
     const { segments, headers, ...rest } = i;
-    return { ...rest, segments: (segments || []).map((s) => ({ start: s.start, end: s.end, pos: s.pos })) };
+    return { ...rest, segments: (segments || []).map((s) => ({ start: s.start, end: s.end, pos: s.pos, speed: s.running ? s.speed || 0 : 0 })) };
   }
   _changed(item) { this.emit('changed', this._public(item)); this._save(); }
   _changedAll() { this.emit('list', this.list()); this._save(); }
@@ -590,7 +670,12 @@ class DownloadManager extends EventEmitter {
   flush() {
     clearTimeout(this.saveTimer);
     try {
-      const data = this.items.map((i) => ({ ...i, segments: (i.segments || []).map((s) => ({ start: s.start, end: s.end, pos: s.pos })) }));
+      // only bytes that are really on disk count as done, so a crash never leaves a hole
+      const data = this.items.map((i) => {
+        const segments = (i.segments || []).map((s) => ({ start: s.start, end: s.end, pos: Math.min(s.pos, s.durable ?? s.pos) }));
+        const received = i.kind === 'http' && i.resumable && i.status !== 'completed' && segments.length ? segments.reduce((a, s) => a + (s.pos - s.start), 0) : i.received;
+        return { ...i, segments, received };
+      });
       fs.writeFileSync(this.file + '.tmp', JSON.stringify(data));
       fs.renameSync(this.file + '.tmp', this.file);
     } catch (e) { console.error('downloads save failed', e.message); }
@@ -628,4 +713,4 @@ function parseMedia(text, base) {
   };
 }
 
-module.exports = { DownloadManager, categoryOf, filenameFrom, expandBatch, sanitizeName, splitRange, parseMaster, parseMedia, CATEGORIES, ALL_EXTS, DEFAULT_SETTINGS };
+module.exports = { backoff, FLUSH_BYTES, DownloadManager, categoryOf, filenameFrom, expandBatch, sanitizeName, splitRange, parseMaster, parseMedia, CATEGORIES, ALL_EXTS, DEFAULT_SETTINGS };
