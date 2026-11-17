@@ -37,9 +37,21 @@ class DownloadItem(
     @Volatile var eta = -1L
     @Volatile var filePath = ""
     @Volatile var contentUri: String? = null
+    /** "http" or "hls" (a video stream saved as .ts) */
+    @Volatile var kind = "http"
+    @Volatile var hlsDone = 0
+    @Volatile var hlsTotal = 0
+    /** per-file speed limit in KB/s, 0 = none (there is also a global one in Settings) */
+    @Volatile var limitKB = 0L
+    @Volatile var sha256: String? = null
+    @Volatile var windowBytes = 0L
+    /** was running when the app was killed (auto-resume candidates); not persisted */
+    @Volatile var interrupted = false
+    val throttle = Throttle { limitKB * 1024 }
+    val category get() = Extras.categoryOf(fileName)
     val segments = mutableListOf<Segment>()
 
-    val progress: Float get() = if (size > 0) (received.toFloat() / size).coerceIn(0f, 1f) else 0f
+    val progress: Float get() = if (kind == "hls") (if (hlsTotal > 0) hlsDone.toFloat() / hlsTotal else 0f) else if (size > 0) (received.toFloat() / size).coerceIn(0f, 1f) else 0f
     val isActive get() = status == Status.CONNECTING || status == Status.DOWNLOADING
     val liveConnections get() = synchronized(segments) { segments.count { it.active } }
 
@@ -50,6 +62,7 @@ class DownloadItem(
         .put("conn", connections).put("ua", userAgent).put("cookies", cookies ?: "").put("ref", referrer ?: "")
         .put("created", createdAt).put("status", status.name).put("received", received).put("resumable", resumable)
         .put("error", error ?: "").put("completed", completedAt).put("path", filePath).put("uri", contentUri ?: "")
+        .put("kind", kind).put("hlsDone", hlsDone).put("hlsTotal", hlsTotal).put("limit", limitKB).put("sha", sha256 ?: "")
         .put("segs", JSONArray().also { a -> synchronized(segments) { segments.forEach { a.put(it.toJson()) } } })
 
     companion object {
@@ -62,6 +75,8 @@ class DownloadItem(
             received = o.optLong("received"); resumable = o.optBoolean("resumable")
             error = o.optString("error").ifEmpty { null }; completedAt = o.optLong("completed")
             filePath = o.optString("path"); contentUri = o.optString("uri").ifEmpty { null }
+            kind = o.optString("kind", "http"); hlsDone = o.optInt("hlsDone"); hlsTotal = o.optInt("hlsTotal")
+            limitKB = o.optLong("limit"); sha256 = o.optString("sha").ifEmpty { null }
             o.optJSONArray("segs")?.let { a -> for (i in 0 until a.length()) segments.add(Segment.from(a.getJSONObject(i))) }
         }
     }

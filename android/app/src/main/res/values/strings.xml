@@ -31,4 +31,10 @@
     <string name="start_all">Start all</string>
     <string name="empty_downloads">No downloads here yet.\nLong-press a link or tap a download on any page.</string>
     <string name="incognito_banner">Incognito: no history, cookies and site data are wiped when you close the last incognito tab.</string>
+    <string name="settings">Settings</string>
+    <string name="back">Back</string>
+    <string name="ai_assistant">AI assistant</string>
+    <string name="print">Print / save as PDF</string>
+    <string name="reopen_tab">Reopen closed tab</string>
+    <string name="shield">Privacy Shield</string>
 </resources>

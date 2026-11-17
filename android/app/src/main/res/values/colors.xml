@@ -15,4 +15,5 @@
     <color name="incognito">#26262B</color>
     <color name="incognito_text">#E8E6E3</color>
     <color name="seg_track">#E2E5EA</color>
+    <color name="route">#6B3FA0</color>
 </resources>

@@ -48,7 +48,7 @@ object SeekerBridge {
                 "newtab.get" -> send(Store.newtab(), null)
                 "newtab.set" -> if (incognito) send(Store.newtab(), null) else send(Store.setNewtab(args.optJSONObject(0) ?: JSONObject()), null)
                 "history.top" -> send(if (incognito) JSONArray() else Store.topSites(args.optInt(0, 8)), null)
-                "localindex.search" -> send(JSONArray(), null)
+                "localindex.search" -> pool.execute { send(PageMemory.search(args.optString(0), args.optInt(1, 6).coerceIn(1, 20)), null) }
                 else -> send(null, "Unknown call")
             }
         }
@@ -56,7 +56,7 @@ object SeekerBridge {
 
     private fun fetch(url: String, opt: JSONObject, ua: String): JSONObject {
         require(url.startsWith("http://", true) || url.startsWith("https://", true)) { "Only http(s) URLs" }
-        val c = URL(url).openConnection() as HttpURLConnection
+        val c = Route.open(url)   // Tor/proxy route; refuses while the route is not ready
         try {
             val timeout = opt.optInt("timeout", 9000).coerceIn(1000, 20000)
             c.connectTimeout = timeout; c.readTimeout = timeout

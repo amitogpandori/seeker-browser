@@ -1,52 +1,140 @@
 name: Android APK
 
+# Builds the signed Seeker for Android APK and publishes it as the GitHub Release "android-v<version>"
+# (a prerelease, never "latest", so the desktop updater and build.yml releases are untouched).
 on:
   push:
     branches: [feat/android]
     paths:
       - 'android/**'
       - 'src/pages/seeker/**'
+      - 'src/preload/tab-preload.js'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
 
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: android
+    env:
+      SEEKER_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests (download engine)
+      - name: Android SDK packages (platform 36, build-tools with 16 KB zipalign)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.1.0" > /dev/null
+          echo "BT=$ANDROID_HOME/build-tools/36.1.0" >> "$GITHUB_ENV"
+
+      - name: Shield script is in sync with the desktop shield
+        working-directory: .
+        run: |
+          python3 android/tools/gen_shield.py
+          git diff --exit-code android/app/src/main/assets/shield.js
+
+      - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Build debug APK (self-signed with the debug key)
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Lint
+        run: ./gradlew --no-daemon lintRelease
 
-      - name: Upload APK
+      - name: Release keystore (from secrets, never committed)
+        env:
+          KS_B64: ${{ secrets.SEEKER_KEYSTORE_B64 }}
+        run: |
+          test -n "$KS_B64" || { echo "::error::SEEKER_KEYSTORE_B64 secret is missing"; exit 1; }
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/seeker-release.jks"
+          echo "SEEKER_KEYSTORE=$RUNNER_TEMP/seeker-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          SEEKER_KEYSTORE_PASSWORD: ${{ secrets.SEEKER_KEYSTORE_PASSWORD }}
+          SEEKER_KEY_ALIAS: ${{ secrets.SEEKER_KEY_ALIAS }}
+          SEEKER_KEY_PASSWORD: ${{ secrets.SEEKER_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Verify APK (signature, 16 KB alignment, SDK levels, no native code)
+        id: apk
+        run: |
+          VERSION=$(grep -oP 'val seekerVersion = "\K[^"]+' app/build.gradle.kts)
+          OUT="Seeker-Android-$VERSION.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$OUT"
+          "$BT/apksigner" verify --verbose --print-certs "$OUT" | tee verify.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" verify.txt
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" verify.txt
+          if grep -q "CN=Android Debug" verify.txt; then echo "::error::signed with the debug key"; exit 1; fi
+          "$BT/zipalign" -c -P 16 4 "$OUT"
+          "$BT/aapt2" dump badging "$OUT" | grep -E "^package|SdkVersion|native-code" | tee badging.txt
+          grep -q "targetSdkVersion:'36'" badging.txt
+          if unzip -l "$OUT" | grep -q " lib/"; then echo "::error::unexpected native libraries"; exit 1; fi
+          sha256sum "$OUT" | tee "$OUT.sha256"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+          echo "cert=$(grep -m1 'certificate SHA-256 digest' verify.txt | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release android-v${{ steps.apk.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.apk.outputs.version }}
+          FILE: ${{ steps.apk.outputs.file }}
+          CERT: ${{ steps.apk.outputs.cert }}
+        run: |
+          TAG="android-v$VERSION"
+          cat > notes.md <<NOTES
+          **Seeker for Android $VERSION** (build ${{ github.run_number }}, commit ${GITHUB_SHA:0:7})
+
+          ### Install on your phone
+          1. On the phone, tap **$FILE** below to download it.
+          2. Open it from the notification or the Files app → allow *Install unknown apps* for your browser/Files when Android asks → **Install**.
+          3. New builds install over the old one (same signing key), keeping your tabs, bookmarks and downloads.
+
+          Android 7.0+ (API 24), built for Android 16 (API 36). Pure Kotlin/Java, no native code, so it runs on 16 KB page-size phones such as the Pixel 10 series.
+
+          Signing certificate SHA-256: \`$CERT\`
+          NOTES
+          sed -i 's/^          //' notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # move the tag to this build's commit, then replace the APK
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+            gh release edit "$TAG" --title "Seeker for Android $VERSION" --notes-file notes.md --prerelease --latest=false
+            gh release upload "$TAG" "$FILE" "$FILE.sha256" --clobber
+          else
+            gh release create "$TAG" "$FILE" "$FILE.sha256" --target "$GITHUB_SHA" --title "Seeker for Android $VERSION" --notes-file notes.md --prerelease --latest=false
+          fi
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$FILE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK as a build artifact too
         uses: actions/upload-artifact@v4
         with:
-          name: seeker-android-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: seeker-android-release-apk
+          path: android/Seeker-Android-*.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload test report
+      - name: Upload test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-test-report
-          path: android/app/build/reports/tests/
+          name: android-reports
+          path: |
+            android/app/build/reports/
           if-no-files-found: ignore

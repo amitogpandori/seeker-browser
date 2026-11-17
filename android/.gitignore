@@ -6,3 +6,8 @@ local.properties
 .idea/
 captures/
 .cxx/
+
+# signing keys are never committed (CI gets them from secrets)
+*.jks
+*.keystore
+keystore.env

@@ -25,14 +25,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** The download list, the scheduler (max 3 at once) and persistence. UI and service observe it. */
 object Downloads {
-    const val MAX_ACTIVE = 3
-    const val DEFAULT_CONNECTIONS = 8
+    val maxActive get() = com.seeker.browser.Prefs.maxConcurrent
 
     private lateinit var app: Context
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val main = Handler(Looper.getMainLooper())
     private val jobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
-    private val engines = java.util.concurrent.ConcurrentHashMap<String, Engine>()
+    private val engines = java.util.concurrent.ConcurrentHashMap<String, Runner>()
     private fun stop(id: String) { jobs.remove(id)?.cancel(); engines.remove(id)?.abort() }
     val items = CopyOnWriteArrayList<DownloadItem>()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -44,7 +43,7 @@ object Downloads {
             val f = File(app.filesDir, "downloads.json")
             if (f.exists()) {
                 val a = JSONArray(f.readText())
-                for (i in 0 until a.length()) items.add(DownloadItem.from(a.getJSONObject(i)).also { if (it.isActive || it.status == Status.QUEUED) it.status = Status.PAUSED })
+                for (i in 0 until a.length()) items.add(DownloadItem.from(a.getJSONObject(i)).also { if (it.isActive || it.status == Status.QUEUED) { it.status = Status.PAUSED; it.interrupted = true } })
             }
         } catch (e: Exception) { /* corrupt: start empty */ }
         main.post(object : Runnable { override fun run() { tick(); main.postDelayed(this, 1000) } })
@@ -59,10 +58,12 @@ object Downloads {
     fun downloadDir(): File = (app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(app.filesDir, "Download")).also { it.mkdirs() }
 
     fun add(url: String, fileName: String? = null, mime: String? = null, userAgent: String, cookies: String? = null,
-            referrer: String? = null, incognito: Boolean = false, contentDisposition: String? = null, connections: Int = DEFAULT_CONNECTIONS): DownloadItem {
+            referrer: String? = null, incognito: Boolean = false, contentDisposition: String? = null, connections: Int = com.seeker.browser.Prefs.connections, hls: Boolean = false): DownloadItem {
         require(url.startsWith("http://", true) || url.startsWith("https://", true)) { "Only http(s) links can be downloaded" }
-        val name = sanitize(fileName ?: URLUtil.guessFileName(url, contentDisposition, mime))
-        val it = DownloadItem(UUID.randomUUID().toString(), url, uniqueName(name), mime ?: guessMime(name), -1, connections, userAgent, cookies, referrer, incognito)
+        var name = sanitize(fileName ?: URLUtil.guessFileName(url, contentDisposition, mime))
+        if (hls) name = name.replace(Regex("\\.(m3u8|bin|txt)$", RegexOption.IGNORE_CASE), "").let { if (it.endsWith(".ts")) it else "$it.ts" }
+        val it = DownloadItem(UUID.randomUUID().toString(), url, uniqueName(name), if (hls) "video/mp2t" else mime ?: guessMime(name), -1, connections, userAgent, cookies, referrer, incognito)
+        if (hls) it.kind = "hls"
         it.filePath = File(downloadDir(), it.fileName).absolutePath
         items.add(0, it)
         save(true); changed(); process()
@@ -73,6 +74,36 @@ object Downloads {
     fun resume(id: String) { val it = get(id) ?: return; if (it.status == Status.PAUSED || it.status == Status.FAILED) { it.status = Status.QUEUED; it.error = null; save(true); changed(); process() } }
     fun pauseAll() { items.filter { it.isActive || it.status == Status.QUEUED }.forEach { pause(it.id) } }
     fun startAll() { items.filter { it.status == Status.PAUSED || it.status == Status.FAILED }.forEach { resume(it.id) } }
+    /** Batch download: "https://x.com/img[01-20].jpg" → one item per URL. */
+    fun addBatch(pattern: String, userAgent: String): Int {
+        val urls = Extras.expandBatch(pattern.trim())
+        urls.forEach { add(it, userAgent = userAgent) }
+        return urls.size
+    }
+
+    /** The link expired: point the download at a fresh URL and keep the bytes already downloaded. */
+    fun refreshLink(id: String, url: String) {
+        val it = get(id) ?: return
+        require(url.startsWith("http://", true) || url.startsWith("https://", true)) { "Only http(s) links" }
+        stop(id)
+        it.url = url
+        if (it.status != Status.COMPLETED) { it.status = Status.QUEUED; it.error = null }
+        save(true); changed(); process()
+    }
+
+    fun setLimit(id: String, kb: Long) { get(id)?.limitKB = kb.coerceAtLeast(0); save(true); changed() }
+
+    /** SHA-256 of a finished file (to compare with the hash a site publishes). Blocking: call off the main thread. */
+    fun sha256(item: DownloadItem): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val input = item.contentUri?.let { app.contentResolver.openInputStream(Uri.parse(it)) } ?: File(item.filePath).inputStream()
+        input.use { s -> val b = ByteArray(256 * 1024); while (true) { val n = s.read(b); if (n < 0) break; md.update(b, 0, n) } }
+        return md.digest().joinToString("") { "%02x".format(it) }.also { item.sha256 = it; save(true) }
+    }
+
+    /** Settings → "Resume unfinished downloads when Seeker opens" (called from the foreground activity). */
+    fun autoResume() { items.filter { it.interrupted && it.status == Status.PAUSED }.forEach { it.interrupted = false; resume(it.id) } }
+
     fun clearCompleted() { items.removeAll { it.status == Status.COMPLETED }; save(true); changed() }
     fun remove(id: String, deleteFile: Boolean) {
         val it = get(id) ?: return
@@ -91,7 +122,7 @@ object Downloads {
     @Synchronized fun process() {
         var running = items.count { it.isActive }
         for (it in items.reversed()) {
-            if (running >= MAX_ACTIVE) break
+            if (running >= maxActive) break
             if (it.status == Status.QUEUED && !jobs.containsKey(it.id)) { start(it); running++ }
         }
         if (running > 0) ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
@@ -100,7 +131,8 @@ object Downloads {
     private fun start(item: DownloadItem) {
         item.status = Status.CONNECTING
         item.error = null
-        val engine = Engine(item, File(item.filePath + ".part"))
+        val part = File(item.filePath + ".part")
+        val engine: Runner = if (item.kind == "hls") HlsEngine(item, part) else Engine(item, part)
         engines[item.id] = engine
         jobs[item.id] = scope.launch {
             try {
@@ -154,6 +186,12 @@ object Downloads {
         for (it in items) {
             if (!it.isActive) continue
             any = true
+            if (it.kind == "hls") {
+                val w = it.windowBytes; it.windowBytes = 0
+                it.speed = if (it.speed == 0.0) w.toDouble() else it.speed * 0.6 + w * 0.4
+                it.eta = if (it.hlsDone > 0 && it.speed > 1) ((it.hlsTotal - it.hlsDone) * (it.received.toDouble() / it.hlsDone) / it.speed).toLong() else -1
+                continue
+            }
             var rec = 0L; var inst = 0.0
             synchronized(it.segments) {
                 for (s in it.segments) {

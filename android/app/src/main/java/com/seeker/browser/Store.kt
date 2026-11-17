@@ -42,6 +42,16 @@ object Store {
         return !had
     }
     fun removeBookmark(url: String) { bookmarks.removeAll { it.url == url }; save("bookmarks", bookmarks) }
+    /** Netscape bookmark file (Chrome/Edge/Firefox/Seeker desktop export). Returns how many were added. */
+    fun importBookmarksHtml(html: String): Int {
+        val have = bookmarks.map { it.url }.toMutableSet()
+        var n = 0
+        for (m in BookmarkHtml.parse(html)) if (have.add(m.first)) { bookmarks.add(Entry(m.first, m.second, System.currentTimeMillis())); n++ }
+        save("bookmarks", bookmarks)
+        return n
+    }
+    fun exportBookmarksHtml(): String = BookmarkHtml.write(bookmarks.map { it.url to it.title })
+
     fun clearBookmarks() { bookmarks.clear(); save("bookmarks", bookmarks) }
 
     // ----- history

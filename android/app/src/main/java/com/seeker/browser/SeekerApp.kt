@@ -9,8 +9,13 @@ import com.seeker.browser.downloads.Downloads
 class SeekerApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        Prefs.init(this)
+        SettingsActivity.applyTheme()
         Store.init(this)
+        Shield.init(this)
+        PageMemory.init(this)
         Downloads.init(this)
+        if (Prefs.route != "direct") Route.apply(this)   // fail closed from the very first request
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel(CH_PROGRESS, getString(R.string.channel_downloads), NotificationManager.IMPORTANCE_LOW))

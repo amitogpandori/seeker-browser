@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="theme_names"><item>Follow system</item><item>Light</item><item>Dark</item></string-array>
+    <string-array name="theme_values"><item>system</item><item>light</item><item>dark</item></string-array>
+    <string-array name="shield_names"><item>Off</item><item>Standard (recommended)</item><item>Strict</item></string-array>
+    <string-array name="shield_values"><item>off</item><item>standard</item><item>strict</item></string-array>
+    <string-array name="signin_names"><item>In the browser (try first)</item><item>Secure Chrome sign-in sheet (Custom Tab)</item></string-array>
+    <string-array name="signin_values"><item>inapp</item><item>customtab</item></string-array>
+    <string-array name="route_names"><item>Direct (normal)</item><item>Tor, through the Orbot app</item><item>My own proxy</item></string-array>
+    <string-array name="route_values"><item>direct</item><item>orbot</item><item>proxy</item></string-array>
+    <string-array name="conn_values"><item>1</item><item>2</item><item>4</item><item>6</item><item>8</item><item>12</item><item>16</item></string-array>
+    <string-array name="concurrent_values"><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item><item>6</item></string-array>
+</resources>

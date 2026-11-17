@@ -23,7 +23,10 @@ import kotlin.random.Random
  * with positional writes, and when a connection finishes early it steals half of the largest
  * remaining segment (dynamic splitting). Retries use exponential backoff with jitter.
  */
-class Engine(private val item: DownloadItem, private val partFile: File) {
+/** A running download: HTTP (multi-connection) or HLS. */
+interface Runner { suspend fun run(); fun abort() }
+
+class Engine(private val item: DownloadItem, private val partFile: File) : Runner {
 
     class Fatal(msg: String) : Exception(msg)
 
@@ -70,10 +73,10 @@ class Engine(private val item: DownloadItem, private val partFile: File) {
     private val openConns = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
 
     /** Pausing cancels the coroutines; this also unblocks reads stuck in the socket right away. */
-    fun abort() { openConns.forEach { try { it.disconnect() } catch (e: Exception) { /* closed */ } } }
+    override fun abort() { openConns.forEach { try { it.disconnect() } catch (e: Exception) { /* closed */ } } }
 
     private fun open(range: String?): HttpURLConnection {
-        val c = URL(item.url).openConnection() as HttpURLConnection
+        val c = com.seeker.browser.Route.open(item.url)   // Tor/proxy route, fails closed
         openConns.add(c)
         c.connectTimeout = 15_000
         c.readTimeout = 20_000
@@ -100,7 +103,7 @@ class Engine(private val item: DownloadItem, private val partFile: File) {
         } finally { c.disconnect(); openConns.remove(c) }
     }
 
-    suspend fun run() {
+    override suspend fun run() {
         if (item.segments.isEmpty()) {
             val p = probe()
             item.size = p.size
@@ -164,6 +167,7 @@ class Engine(private val item: DownloadItem, private val partFile: File) {
                             if (n < 0 || fill == buf.size || fill >= limit) {
                                 val k = min(fill.toLong(), limit).toInt()
                                 if (k > 0) {
+                                    GlobalThrottle.take(k); item.throttle.take(k)
                                     val bb = ByteBuffer.wrap(buf, 0, k)
                                     var at = seg.pos
                                     while (bb.hasRemaining()) at += ch.write(bb, at)

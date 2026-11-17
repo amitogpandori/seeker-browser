@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="General" app:iconSpaceReserved="false">
+        <EditTextPreference app:key="homepage" app:title="Home page" app:iconSpaceReserved="false"
+            app:summary="Empty = Seeker search. Enter a web address to use it instead." app:defaultValue="" />
+        <ListPreference app:key="theme" app:title="Theme" app:iconSpaceReserved="false" app:defaultValue="system"
+            app:entries="@array/theme_names" app:entryValues="@array/theme_values" app:useSimpleSummaryProvider="true" />
+        <SwitchPreferenceCompat app:key="restore_tabs" app:title="Reopen tabs from last time" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <Preference app:key="edit_shortcuts" app:title="New-tab shortcuts" app:summary="Edit them on the Seeker page: long-press a shortcut or tap ＋" app:iconSpaceReserved="false" />
+        <Preference app:key="import_bookmarks" app:title="Import bookmarks" app:summary="From a bookmarks .html file exported by Chrome, Edge, Firefox or Seeker desktop" app:iconSpaceReserved="false" />
+        <Preference app:key="export_bookmarks" app:title="Export bookmarks" app:summary="Save them as a bookmarks .html file" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Privacy Shield" app:iconSpaceReserved="false">
+        <ListPreference app:key="shield_mode" app:title="Protection level" app:iconSpaceReserved="false" app:defaultValue="standard"
+            app:entries="@array/shield_names" app:entryValues="@array/shield_values" app:useSimpleSummaryProvider="true" />
+        <SwitchPreferenceCompat app:key="adblock" app:title="Block ads and trackers" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="fingerprint" app:title="Anti-fingerprinting" app:summary="Canvas, WebGL, audio and hardware noise so sites can't track you by your device" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="strip_tracking" app:title="Clean links" app:summary="Remove utm_, fbclid, gclid… and skip redirect wrappers" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="block_3p_cookies" app:title="Block third-party cookies" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="forget_on_close" app:title="Forget sites when you close them" app:summary="Delete a site's cookies and storage when its last tab closes (bookmarked and Shield-off sites are kept)" app:defaultValue="false" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="do_not_track" app:title="Send Global Privacy Control / Do Not Track" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="look_like_chrome" app:title="Look like Chrome" app:summary="Hide the WebView marks in the user agent (helps Google sign-in)" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <Preference app:key="exceptions" app:title="Sites with Shield off" app:iconSpaceReserved="false" />
+        <ListPreference app:key="google_signin" app:title="Google sign-in" app:iconSpaceReserved="false" app:defaultValue="inapp"
+            app:entries="@array/signin_names" app:entryValues="@array/signin_values" app:useSimpleSummaryProvider="true" />
+        <Preference app:key="forget_all" app:title="Forget every site now" app:summary="Delete all cookies, site storage and cache (keeps bookmarks, history and downloads)" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Connection (Tor / proxy)" app:iconSpaceReserved="false">
+        <ListPreference app:key="route" app:title="Route all browsing through" app:iconSpaceReserved="false" app:defaultValue="direct"
+            app:entries="@array/route_names" app:entryValues="@array/route_values" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="proxy" app:title="Proxy address" app:summary="http://host:port or socks5://host:port" app:defaultValue="" app:iconSpaceReserved="false" />
+        <Preference app:key="orbot" app:title="Open Orbot" app:summary="Tor on Android comes from the free Orbot app by the Tor Project" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Downloads" app:iconSpaceReserved="false">
+        <ListPreference app:key="dl_connections" app:title="Connections per download" app:iconSpaceReserved="false" app:defaultValue="8"
+            app:entries="@array/conn_values" app:entryValues="@array/conn_values" app:useSimpleSummaryProvider="true" />
+        <ListPreference app:key="dl_max_concurrent" app:title="Downloads at the same time" app:iconSpaceReserved="false" app:defaultValue="3"
+            app:entries="@array/concurrent_values" app:entryValues="@array/concurrent_values" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="dl_speed_limit" app:title="Speed limit (KB/s, 0 = none)" app:defaultValue="0" app:useSimpleSummaryProvider="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="dl_clipboard" app:title="Offer to download copied links" app:summary="When you copy a link to a file (.zip, .apk, .mp4…)" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="dl_auto_resume" app:title="Resume unfinished downloads when Seeker opens" app:defaultValue="true" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Seeker search &amp; AI" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat app:key="page_memory" app:title="Remember pages I visit for Seeker" app:summary="Search inside pages you've read. Stored only on this phone; never incognito, logins or banking." app:defaultValue="true" app:iconSpaceReserved="false" />
+        <Preference app:key="clear_memory" app:title="Clear page memory" app:iconSpaceReserved="false" />
+        <Preference app:key="ai" app:title="AI assistant" app:summary="Provider, model and API keys (free and paid)" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Gestures" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat app:key="gesture_swipe_tabs" app:title="Swipe the address bar to switch tabs" app:defaultValue="true" app:iconSpaceReserved="false" />
+        <SwitchPreferenceCompat app:key="gesture_pull_refresh" app:title="Pull down to refresh" app:defaultValue="true" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="About" app:iconSpaceReserved="false">
+        <Preference app:key="about" app:title="Seeker for Android" app:iconSpaceReserved="false" />
+        <Preference app:key="updates" app:title="Check for updates" app:summary="Opens the GitHub release page" app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+</PreferenceScreen>
